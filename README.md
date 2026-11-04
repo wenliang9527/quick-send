@@ -3,12 +3,13 @@
 ZCode 会话侧栏「快捷发送」面板：常用语管理，一键复制到剪贴板或发送。
 设计与调研结论见 [docs/design.md](docs/design.md)（含宿主 API 调研、spike 实测、性能优化记录）。
 
-## 当前状态（v0.5.1）
+## 当前状态（v0.5.2）
 
 - M0 Spike ✅ / M1 MVP ✅ / M2 完整功能 ✅ / M3 收尾 ✅
 - **v0.4.0：server 重写为 Rust 原生单文件 exe——常驻内存 54.5MB → 3.8MB（14×），exe 仅 0.5MB**
 - **v0.5.0：常用语与 DSH 侧双向共享**（shared-phrases 契约）：内容进共享 phrases.json（严格六字段），置顶/排序留本地 view.json；旧 snippets.json 启动自动合并迁移（.migrated 留证）
 - **v0.5.1：按 DSH 交接文档（HANDOFF-DSH.md）对齐**——长度上限统一 120/20000/20 **字符**（原 50/10KB字节/20，DSH 存的长条目本侧可读可改）；读侧剥 UTF-8 BOM（否则会把 DSH 合法文件误隔离）；缺 schemaVersion 只拒读写**不再隔离**；重复 id 保留首条、缺 id/text 条目跳过、数字时间戳回退当前时间（对齐 normalizePhrase）；坏文件留证 `.bad-<时间戳>`（多次损坏不互相覆盖）
+- **v0.5.2：打开感知 + 会话内快捷打开**——首帧纯 CSS 加载指示（延迟实测：服务端全程 5-8ms，大头在宿主 webview 与 SDK 包解析，插件侧已无可压缩）；新增斜杠命令 **`/quick-send`**（插件自带 commands/，不占共用技能池；带标题关键词直接展开该条）
 
 ## 功能
 
@@ -19,6 +20,7 @@ ZCode 会话侧栏「快捷发送」面板：常用语管理，一键复制到�
   - **▶ 发送** → 占位符展开 → 经宿主确认框直达会话（带"来自插件"署名）
 - 占位符（server 展开；未知原样保留）：`{{date}}` `{{time}}` `{{datetime}}` `{{workspace}}` `{{clipboard}}`
 - 界面跟随宿主语言（zh/en）与主题；搜索词/分类 chips 会话内记忆
+- 会话内快捷打开：斜杠命令 **`/quick-send`**（直接出面板卡片；带标题关键词则直接展开该条，如 `/quick-send 复位日志`）；插件卡片「打开」按钮直达侧栏
 - 数据分层（CONTRACT.md）：**内容** = 共享 `phrases.json`（默认 `D:\WORK_VSCODE\Vibe-coding\shared-phrases\`，插件设置可改路径），DSH/ZCode 双向写，原子替换+损坏自愈+schemaVersion 守卫；**视图**（置顶/排序）= 本地 `view.json`
 - 上限与 DSH 对齐：标题 120 / 正文 20000 / 分类 20 **字符**（DSH 超限截断、本侧超限拒绝，共同上界一致）；条数护栏 2000（契约无上限，超出仅拒新增）；占位符 `{{datetime}}` 带秒（契约），`{{clipboard}}` 仅 ZCode 侧
 
