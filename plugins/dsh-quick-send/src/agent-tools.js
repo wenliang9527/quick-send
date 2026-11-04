@@ -63,7 +63,8 @@ export function registerAgentTools(deps) {
     tools.register({
       name: 'quick_send_list',
       description:
-        '列出用户的常用语（快捷短语）。用户提到「常用语」「快捷短语」「snippet」或让你复用以前存过的话时使用。\n' +
+        '列出用户的常用语（快捷短语）。用户提到「常用语」「快捷短语」「snippet」，或让你复用以前存过的话时使用。\n' +
+        '**总结归纳/整理常用语之前，先调用本工具查看现有条目，避免存出重复短语。**\n' +
         '返回每条 id、标题、分类；includeText=true 时一并返回正文。\n' +
         '**修改或删除前必须先调用本工具拿到 id** —— update/delete 只接受 id，不接受标题。',
       parameters: {
@@ -181,7 +182,9 @@ export function registerAgentTools(deps) {
     tools.register({
       name: 'quick_send_add',
       description:
-        '新增一条常用语。用户说「把这个存成常用语」「以后都这么说」时使用。\n' +
+        '新增一条常用语。用户说「把这个存成常用语」「以后都这么说」「整理成常用语」时使用。\n' +
+        '归纳纪律：一条只讲一件事（不要把多个意图塞进同一条）；标题简短便于识别；' +
+        '正文写成能直接插入发送的完整句子，不要写成指令性备注。\n' +
         `长度上限：标题 ≤${MAX_TITLE} 字符、正文 ≤${MAX_TEXT} 字符、分类 ≤${MAX_CATEGORY} 字符，` +
         '超长会被静默截断（不报错），请自行控制长度。\n' +
         PLACEHOLDER_HINT +
