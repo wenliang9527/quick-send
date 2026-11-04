@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>快捷发送</title>
+    <style>
+      :root {
+        --bg: #ffffff;
+        --fg: #1f2328;
+        --muted: #59636e;
+        --border: #d1d9e0;
+        --card: #f6f8fa;
+        --accent: #0969da;
+        --ok: #1a7f37;
+        --err: #cf222e;
+        --warn: #9a6700;
+      }
+      [data-theme="dark"] {
+        --bg: #0d1117;
+        --fg: #e6edf3;
+        --muted: #8b949e;
+        --border: #30363d;
+        --card: #161b22;
+        --accent: #4493f8;
+        --ok: #3fb950;
+        --err: #f85149;
+        --warn: #d29922;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: 12px;
+        background: var(--bg); color: var(--fg);
+        font: 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      }
+      header { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+      h1 { font-size: 14px; margin: 0; white-space: nowrap; }
+      #search {
+        flex: 1; min-width: 0; padding: 6px 10px;
+        border: 1px solid var(--border); border-radius: 6px;
+        background: var(--card); color: var(--fg); font: inherit; outline: none;
+      }
+      #search:focus { border-color: var(--accent); }
+      button {
+        padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+        background: var(--card); color: var(--fg); cursor: pointer; font: inherit;
+        white-space: nowrap;
+      }
+      button:hover:not(:disabled) { border-color: var(--accent); }
+      button:disabled { opacity: 0.5; cursor: default; }
+      button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      button.danger { color: var(--err); border-color: var(--err); }
+      /* ── 分类 chips ── */
+      #chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 4px; }
+      #chips button { padding: 3px 10px; font-size: 12px; border-radius: 999px; flex: 0 0 auto; color: var(--muted); }
+      #chips button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+      /* ── 列表 ── */
+      .group-label { color: var(--muted); font-size: 12px; margin: 10px 0 6px; }
+      .card { border: 1px solid var(--border); border-radius: 8px; background: var(--card); margin-bottom: 8px; }
+      .card-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px 0; }
+      .card-title { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .icon-btn { padding: 2px 6px; border: none; background: transparent; color: var(--muted); font-size: 13px; }
+      .icon-btn:hover { color: var(--accent); }
+      .card-cat { color: var(--muted); font-size: 11px; border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; }
+      .card-body {
+        padding: 4px 10px 8px; color: var(--muted); font-size: 12px;
+        display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+        white-space: pre-wrap; word-break: break-word;
+      }
+      .card-actions { display: flex; gap: 6px; padding: 0 10px 10px; }
+      .card-actions button { flex: 1; }
+      .more-menu { display: flex; gap: 6px; padding: 0 10px 10px; border-top: 1px dashed var(--border); padding-top: 8px; }
+      .more-menu button { flex: 1; font-size: 12px; }
+      .pin-flag { color: var(--warn); font-size: 12px; }
+      #empty { color: var(--muted); text-align: center; padding: 32px 12px; }
+      #empty button { margin-top: 10px; }
+      /* ── 状态条 ── */
+      #status {
+        position: sticky; bottom: 0; margin-top: 8px; padding: 8px 10px;
+        border-radius: 6px; font-size: 12px; display: none;
+        border: 1px solid var(--border); background: var(--card);
+        word-break: break-all;
+      }
+      #status.show { display: block; }
+      #status.ok { color: var(--ok); border-color: var(--ok); }
+      #status.err { color: var(--err); border-color: var(--err); }
+      /* ── 编辑抽屉 ── */
+      #overlay {
+        position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+        display: none; align-items: flex-end;
+      }
+      #overlay.show { display: flex; }
+      #drawer {
+        width: 100%; max-height: 92%; overflow: auto;
+        background: var(--bg); border-top: 1px solid var(--border);
+        border-radius: 10px 10px 0 0; padding: 14px;
+      }
+      #drawer h2 { font-size: 14px; margin: 0 0 10px; }
+      #drawer label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+      #f-title, #f-body, #f-category {
+        width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+        background: var(--card); color: var(--fg); font: inherit; outline: none;
+      }
+      #f-body { min-height: 140px; resize: vertical; white-space: pre-wrap; }
+      #f-title:focus, #f-body:focus, #f-category:focus { border-color: var(--accent); }
+      .field-err { color: var(--err); font-size: 12px; margin-top: 6px; display: none; }
+      .drawer-foot { display: flex; gap: 8px; margin-top: 14px; }
+      .drawer-foot button { flex: 1; padding: 8px; }
+      .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+      code { background: var(--card); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>快捷发送</h1>
+      <input id="search" type="search" placeholder="搜索标题/内容…" />
+      <button id="btn-new" class="primary">＋ 新建</button>
+    </header>
+    <div id="chips"></div>
+    <div id="list"></div>
+    <div id="empty" style="display:none"></div>
+    <div id="status"></div>
+
+    <div id="overlay">
+      <div id="drawer">
+        <h2 id="drawer-title">新建常用语</h2>
+        <label for="f-title">标题（必填，≤50 字）</label>
+        <input id="f-title" maxlength="50" placeholder="如：复位日志采集" />
+        <label for="f-category">分类（可选，≤20 字）</label>
+        <input id="f-category" maxlength="20" list="cat-list" placeholder="如：嵌入式（可留空）" />
+        <datalist id="cat-list"></datalist>
+        <label for="f-body">内容（必填，≤10KB）</label>
+        <textarea id="f-body" placeholder="点击卡片「复制」后粘贴到发送栏；点「发送」经确认直接进会话"></textarea>
+        <div class="field-err" id="f-err"></div>
+        <div class="hint">
+          <span id="ph-hint">可用占位符：</span><code>{{date}}</code> <code>{{time}}</code> <code>{{datetime}}</code>
+          <code>{{workspace}}</code> <code>{{clipboard}}</code>
+        </div>
+        <div class="drawer-foot">
+          <button id="btn-cancel">取消</button>
+          <button id="btn-save" class="primary">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

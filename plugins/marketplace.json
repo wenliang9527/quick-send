@@ -1,0 +1,16 @@
+{
+  "name": "quick-send-local",
+  "owner": { "name": "温良" },
+  "metadata": {
+    "description": "Quick-Send 本地插件市场：会话侧栏快捷发送面板（常用语一键复制/发送）"
+  },
+  "plugins": [
+    {
+      "name": "quick-send",
+      "source": "./quick-send",
+      "version": "0.3.1",
+      "description": "会话侧栏快捷发送面板：常用语管理，一键复制到剪贴板或发送（分类/搜索/置顶/占位符）。",
+      "category": "productivity"
+    }
+  ]
+}

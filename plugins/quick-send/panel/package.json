@@ -1,0 +1,19 @@
+{
+  "name": "quick-send-panel",
+  "version": "0.3.1",
+  "description": "Quick-Send 面板（MCP App）：常用语管理，一键复制/发送",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node server/server.mjs",
+    "test": "node --test test/expand.test.mjs test/store.test.mjs test/i18n.test.mjs test/concurrency.test.mjs && node test/smoke.mjs"
+  },
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^2.0.3",
+    "@modelcontextprotocol/server": "^2.3.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  },
+  "private": true
+}

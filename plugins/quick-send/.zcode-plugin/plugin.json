@@ -1,0 +1,29 @@
+{
+  "name": "quick-send",
+  "version": "0.3.1",
+  "description": "会话侧栏快捷发送面板：常用语管理，一键复制到剪贴板或发送（分类/搜索/置顶/占位符）。",
+  "keywords": ["snippets", "quick-send", "clipboard", "mcp-app", "productivity"],
+  "mcpServers": {
+    "quick-send": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${ZCODE_PLUGIN_ROOT}/panel/server/server.mjs"],
+      "cwd": "${ZCODE_PROJECT_DIR}",
+      "env": {
+        "NODE_ENV": "production",
+        "QUICK_SEND_DATA": "${ZCODE_PLUGIN_DATA}"
+      }
+    }
+  },
+  "ui": {
+    "surfaces": [
+      {
+        "id": "quick-send",
+        "title": { "zh-CN": "快捷发送", "en": "Quick Send" },
+        "server": "quick-send",
+        "resourceUri": "ui://quick-send/panel.html",
+        "availability": "session"
+      }
+    ]
+  }
+}
