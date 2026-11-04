@@ -1,41 +1,46 @@
 # Quick-Send
 
 ZCode 会话侧栏「快捷发送」面板：常用语管理，一键复制到剪贴板或发送。
-设计与调研结论见 [docs/design.md](docs/design.md)（含宿主 API 调研、spike 实测结论、风险表）。
+设计与调研结论见 [docs/design.md](docs/design.md)（含宿主 API 调研、spike 实测、性能优化记录）。
 
-## 当前状态（v0.3.0）
+## 当前状态（v0.4.0）
 
-- M0 Spike ✅ / M1 MVP ✅ / M2 完整功能 ✅（均含自动化测试与实测）
-- M3 收尾：自动化验收全过（33 项冒烟 + 24 项单元/并发），剩余日常使用反馈打磨
+- M0 Spike ✅ / M1 MVP ✅ / M2 完整功能 ✅ / M3 收尾 ✅
+- **v0.4.0：server 由 Node 重写为 Rust 原生单文件 exe——常驻内存 54.5MB → 3.8MB（14×），exe 仅 0.5MB**
+  面板/数据/工具协议零变化，同一套测试矩阵全过（Rust 单元 14 + 冒烟 33 + 并发 1 + i18n 3）
 
 ## 功能
 
 - 常用语增删改查；搜索（标题+正文）；置顶段 + 分类段两级分组，组内上移/下移
-- 分类：chips 过滤、编辑器带已有分类建议、批量改名（server `rename_category`）
+- 分类：chips 过滤、编辑器带已有分类建议、批量改名
 - 每条两个动作：
   - **📋 复制** → 占位符展开 → 写系统剪贴板（~400ms）→ 粘贴到发送栏改后发送
   - **▶ 发送** → 占位符展开 → 经宿主确认框直达会话（带"来自插件"署名）
-- 占位符（复制/发送时由 server 展开；未知原样保留）：
+- 占位符（server 展开；未知原样保留）：`{{date}}` `{{time}}` `{{datetime}}` `{{workspace}}` `{{clipboard}}`
+- 界面跟随宿主语言（zh/en）与主题；搜索词/分类 chips 会话内记忆
+- 数据：`${ZCODE_PLUGIN_DATA}/snippets.json`（物理 `~/.zcode/cli/plugins/data/quick-send@quick-send-local/`），原子写、损坏自愈、上限 200 条/10KB/分类 20 字
 
-  | 占位符 | 展开为 |
-  |---|---|
-  | `{{date}}` | `2026-11-03` |
-  | `{{time}}` | `14:30` |
-  | `{{datetime}}` | `2026-11-03 14:30` |
-  | `{{workspace}}` | 当前项目目录名 |
-  | `{{clipboard}}` | 当前剪贴板文本（只在此占位符存在时才读取） |
+## 资源占用（实测）
 
-- 界面语言跟随宿主（zh/en）；深浅色跟随宿主主题；搜索词/分类 chips 会话内记忆（widgetState）
-- 数据：`${ZCODE_PLUGIN_DATA}/snippets.json`（物理 `~/.zcode/cli/plugins/data/quick-send@quick-send-local/`），原子写，损坏自动留证 `.bad` 后空表启动；上限 200 条 / 正文 10KB / 分类 20 字
+| 组件 | 占用 |
+|---|---|
+| server（quick-send-server.exe，常驻） | **3.8 MB**（每会话一份；零轮询零后台） |
+| 面板 webview | 仅面板打开时（宿主托管） |
+| PowerShell | 瞬时，仅复制/读剪贴板时 ~350ms |
 
 ## 构建 / 测试
 
 ```bash
 cd plugins/quick-send/panel
-npm install
-npm run build     # 产出 dist/panel.html（单文件 MCP 资源,≤4MiB）
-npm test          # 单元(expand/store/i18n) + 双会话并发 + 全链路冒烟
+npm install                  # 构建期依赖（esbuild + ext-apps 面板 SDK）
+npm run build                # 面板 → dist/panel.html
+npm run build:server         # Rust server → server/bin/quick-send-server.exe（需 cargo）
+npm run test:rust            # Rust 单元测试
+npm test                     # i18n + 双会话并发 + 33 项全链路冒烟（驱动 Rust exe）
 ```
+
+改 server 逻辑：`server-rs/src/*.rs` → `npm run build:server` → `npm test`。
+改面板：`src/*` → `npm run build`。
 
 ## 本地安装 / 更新（ZCode Desktop UI）
 
@@ -47,19 +52,20 @@ npm test          # 单元(expand/store/i18n) + 双会话并发 + 全链路冒�
 
 ```
 plugins/quick-send/
-├─ .zcode-plugin/plugin.json    # mcpServers(QUICK_SEND_DATA 注入) + ui.surfaces(会话面板)
+├─ .zcode-plugin/plugin.json         # command 直指 Rust exe;QUICK_SEND_DATA 注入
 └─ panel/
-   ├─ src/panel.html / app.js / i18n.js        # 面板(ext-apps SDK,离线打包单文件)
-   ├─ server/server.mjs         # MCP server:panel 锚点 + 8 个 visibility:app 工具
-   ├─ server/store.mjs          # 数据层:原子写/损坏自愈/校验/分段排序
-   ├─ server/expand.mjs         # 占位符引擎(vars>内建>原样保留)
-   ├─ server/clipboard.mjs      # Set/Get-Clipboard(临时文件+EncodedCommand)
-   └─ test/                     # 单元 + 并发 + 冒烟
+   ├─ src/panel.html / app.js / i18n.js   # 面板(ext-apps SDK,esbuild 离线打包单文件)
+   ├─ server-rs/                      # Rust server 源码(cargo,单线程 stdio JSON-RPC)
+   │  └─ src/{main,tools,store,expand,clipboard}.rs
+   ├─ server/bin/quick-send-server.exe    # 编译产物(入库,市场按目录安装)
+   ├─ build.mjs / scripts/copy-server.mjs
+   └─ test/{smoke,concurrency,i18n}.test.mjs … 冒烟
 ```
 
-## 工程纪律（实测教训,详见 design.md）
+## 工程纪律（实测教训,详见 design.md §9/§14）
 
 - 面板只用官方 ext-apps SDK（`app.callServerTool` / `app.sendMessage`），不碰 `window.zcode`
 - `powershell -Command -` 会把 stdin 逐行当命令执行 → 剪贴板走临时文件 + `-EncodedCommand`
 - 面板侧 `navigator.clipboard` 被宿主权限策略拦截 → 复制唯一路径是服务端
-- `save_snippet` 全量覆盖 category —— 面板所有保存必须显式带当前分类
+- Rust 版协议应答照抄 SDK 实测捕获（`_meta` 含 SDK 自动补的 `ui/resourceUri`）
+- cargo 全局 USTC 镜像对 cargo 不可达时,项目级 `.cargo/config.toml` 覆盖为 rsproxy

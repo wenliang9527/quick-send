@@ -449,6 +449,26 @@ S1–S3 任一失败即回到设计评审;S4/S5 失败有既定回退,不阻塞�
 - 若官方开放 composer 草稿 API:复制按钮升级为"填入发送栏"(本方案的 copy 路径一行换掉)
 - 提交到 ZCode 官方市场(需按官方 zip 规范打包)
 
+## 14. 性能优化记录(v0.4.0,2026-11-04)
+
+用户反馈"这只是个文档功能,55MB 常驻太重"。量化定位:裸 Node 进程地板 41.2MB(实测,
+jitless 无效),SDK 仅 ~13MB,业务代码近乎免费 → **在 Node 内无优化空间**。
+
+决策:server 用 Rust 重写(本机 cargo 1.99.1 可用)。要点:
+
+- 协议层手写换行分隔 JSON-RPC,**应答形状逐字段照抄 Node SDK 版的实测捕获**
+  (initialize capabilities / tools 的 inputSchema 与 `_meta` 含 SDK 自动补的
+  `ui/resourceUri`),消除协议猜测;同一套 33 项冒烟原样回归验证
+- 依赖仅 serde/serde_json/base64/chrono;单线程阻塞循环(工具均毫秒级);
+  release profile opt-level=z + lto + strip → **exe 0.5MB,常驻 RSS 3.8MB(54.5MB → 14 倍改善)**
+- 面板/webview/数据格式/工具协议零变化——升级对用户透明
+- 工程坑:cargo 全局 USTC 镜像 curl 可通但 cargo libcurl 0ms 连接失败,
+  项目级 `.cargo/config.toml` 覆盖为 rsproxy sparse 解决
+- 分发:编译产物 `server/bin/quick-send-server.exe` 随插件入库(本地市场按目录拷贝安装);
+  `npm run build:server` = cargo build + 拷贝;`npm run test:rust` = cargo test
+
+测试矩阵(v0.4.0 全过):Rust 单元 14 + i18n 3 + 并发 1(52ms,Node 版 465ms)+ 冒烟 33。
+
 ---
 
 ## 附录 A:调研证据索引

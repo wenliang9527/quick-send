@@ -13,10 +13,10 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const SERVER = join(here, "..", "server", "server.mjs");
+const SERVER = join(here, "..", "server", "bin", "quick-send-server.exe");
 
 function startServer(dataDir) {
-  const child = spawn(process.execPath, [SERVER], {
+  const child = spawn(SERVER, [], {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, QUICK_SEND_DATA: dataDir },
   });

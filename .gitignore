@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.clip
 snippets.json.bad
+plugins/quick-send/panel/server-rs/target/
+

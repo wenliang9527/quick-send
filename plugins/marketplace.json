@@ -8,8 +8,8 @@
     {
       "name": "quick-send",
       "source": "./quick-send",
-      "version": "0.3.1",
-      "description": "会话侧栏快捷发送面板：常用语管理，一键复制到剪贴板或发送（分类/搜索/置顶/占位符）。",
+      "version": "0.4.0",
+      "description": "会话侧栏快捷发送面板：常用语管理，一键复制到剪贴板或发送（Rust 原生后端，常驻 ~4MB）。",
       "category": "productivity"
     }
   ]

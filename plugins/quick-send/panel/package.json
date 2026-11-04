@@ -1,19 +1,18 @@
 {
   "name": "quick-send-panel",
-  "version": "0.3.1",
-  "description": "Quick-Send 面板（MCP App）：常用语管理，一键复制/发送",
+  "version": "0.4.0",
+  "description": "Quick-Send 面板（MCP App）：Rust 原生 server + 面板构建",
   "scripts": {
     "build": "node build.mjs",
-    "start": "node server/server.mjs",
-    "test": "node --test test/expand.test.mjs test/store.test.mjs test/i18n.test.mjs test/concurrency.test.mjs && node test/smoke.mjs"
+    "build:server": "cargo build --release --manifest-path server-rs/Cargo.toml && node scripts/copy-server.mjs",
+    "test:rust": "cargo test --release --manifest-path server-rs/Cargo.toml",
+    "test": "node --test test/i18n.test.mjs test/concurrency.test.mjs && node test/smoke.mjs",
+    "start": "server/bin/quick-send-server.exe"
   },
   "type": "module",
-  "dependencies": {
+  "devDependencies": {
     "@modelcontextprotocol/ext-apps": "^2.0.3",
     "@modelcontextprotocol/server": "^2.3.1"
-  },
-  "devDependencies": {
-    "esbuild": "^0.28.2"
   },
   "private": true
 }

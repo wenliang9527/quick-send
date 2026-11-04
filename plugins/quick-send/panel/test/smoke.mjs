@@ -16,7 +16,7 @@ const check = (name, cond, detail) => {
   if (!cond) failed++;
 };
 
-const child = spawn(process.execPath, ["server/server.mjs"], {
+const child = spawn("server/bin/quick-send-server.exe", [], {
   stdio: ["pipe", "pipe", "pipe"],
   env: { ...process.env, QUICK_SEND_DATA: dataDir },
 });
@@ -149,8 +149,11 @@ try {
   check("{{workspace}} 展开", r.data.text.includes("w=panel"), r.data.text); // smoke spawn cwd = panel/
   check("未知占位符原样保留", r.data.text.includes("u={{unknown}}"), r.data.text);
 
-  const { setClipboard } = await import("../server/clipboard.mjs");
-  await setClipboard("CLIPXYZ-内容");
+  // 剪贴板准备改用插件自身的 copy_snippet(真实闭环,且不再依赖已删除的 JS 模块)
+  r = await call("save_snippet", { snippet: { title: "clipset", body: "CLIPXYZ-内容" } });
+  const idClipSet = r.data.snippets.find((s) => s.title === "clipset")?.id;
+  r = await call("copy_snippet", { id: idClipSet });
+  if (r.isError) { check("剪贴板准备(copy_snippet)", false, r.text); }
   r = await call("save_snippet", { snippet: { title: "phclip", body: "剪贴板=({{clipboard}})" } });
   const idPhClip = r.data.snippets.find((s) => s.title === "phclip")?.id;
   r = await call("render_snippet", { id: idPhClip });
@@ -159,7 +162,7 @@ try {
   check("copy_snippet 含展开", !r.isError && r.data.preview.startsWith("剪贴板=("), r.text);
 
   // 清理 M2 残留（上限测试要在干净存储上跑；idB 在损坏自愈时已随数据清掉，删它会报 not_found，忽略）
-  for (const id of [idB, idCatA, idCatB, idCatA2, idPh, idPhClip].filter(Boolean)) {
+  for (const id of [idB, idCatA, idCatB, idCatA2, idPh, idPhClip, idClipSet].filter(Boolean)) {
     await call("delete_snippet", { id });
   }
   r = await call("list_snippets");

@@ -1,0 +1,11 @@
+# 项目级覆盖：全局 CARGO_HOME(D:\rust\cargo\config.toml)的 USTC 镜像在 cargo 下不可达
+# (curl 可通但 cargo libcurl 0ms 连接失败)，本工程改用 rsproxy sparse 源。
+# 项目级配置对同一 key 优先于用户级。
+[source.crates-io]
+replace-with = 'rsproxy-sparse'
+
+[source.rsproxy-sparse]
+registry = "sparse+https://rsproxy.cn/index/"
+
+[net]
+git-fetch-with-cli = true
