@@ -12,10 +12,18 @@ import path from 'node:path'
 
 export const SCHEMA_VERSION = 1
 
-/** 共享内容文件默认位置；可用环境变量或 config 覆盖。 */
+/**
+ * 内容文件默认位置：跟着用户目录走，开箱即用、不依赖任何绝对路径。
+ *
+ * 纪律：这里**不得**出现任何具体的盘符或机器路径。想和 ZCode 等其他客户端共享，
+ * 由使用者在 profile 的 cordis.patch.yml 里显式配置 phrasesFile 指向同一个文件
+ * （见 README「两种装法」），而不是把某台机器的路径写成默认值。
+ *
+ * 优先级：config.phrasesFile（index.js 处理）> 环境变量 > ~/.dsh/quick-send/phrases.json
+ */
 export function defaultPhrasesFile() {
   if (process.env.DSH_QUICK_SEND_PHRASES_FILE) return process.env.DSH_QUICK_SEND_PHRASES_FILE
-  return 'D:\\WORK_VSCODE\\Vibe-coding\\shared-phrases\\phrases.json'
+  return path.join(os.homedir(), '.dsh', 'quick-send', 'phrases.json')
 }
 
 /** 本侧视图文件默认位置。 */

@@ -16,6 +16,8 @@ import {
   writeView,
   mergeForDisplay,
   atomicWrite,
+  defaultPhrasesFile,
+  defaultViewFile,
   SCHEMA_VERSION,
 } from '../src/store.js'
 
@@ -253,4 +255,42 @@ test('mergeForDisplay: 视图缺失时补默认值不报错', () => {
   const rows = mergeForDisplay([{ id: 'x', title: 'X', text: '', category: '', createdAt: n, updatedAt: n }], {})
   assert.equal(rows[0].pinned, false)
   assert.equal(rows[0].order, 0)
+})
+
+// ---- 默认数据路径（0.2.2 回归守门）------------------------------------------
+// 背景：0.1.0/0.2.x 曾把作者机器上的 D:\WORK_VSCODE\... 写成默认值，
+// 陌生人安装后会在自己的 D 盘凭空建目录。这里锁死「默认值必须跟着用户目录」。
+
+test('defaultPhrasesFile: 默认落在 ~/.dsh/quick-send/ 下，不依赖任何盘符', () => {
+  const prev = process.env.DSH_QUICK_SEND_PHRASES_FILE
+  delete process.env.DSH_QUICK_SEND_PHRASES_FILE
+  try {
+    const p = defaultPhrasesFile()
+    assert.equal(p, path.join(os.homedir(), '.dsh', 'quick-send', 'phrases.json'))
+    assert.ok(!/WORK_VSCODE/i.test(p), '默认路径不得包含作者机器路径')
+    assert.ok(p.startsWith(os.homedir()), '默认路径必须位于用户主目录下')
+  } finally {
+    if (prev !== undefined) process.env.DSH_QUICK_SEND_PHRASES_FILE = prev
+  }
+})
+
+test('defaultViewFile: 默认落在 ~/.dsh/quick-send/view.json', () => {
+  const prev = process.env.DSH_QUICK_SEND_VIEW_FILE
+  delete process.env.DSH_QUICK_SEND_VIEW_FILE
+  try {
+    assert.equal(defaultViewFile(), path.join(os.homedir(), '.dsh', 'quick-send', 'view.json'))
+  } finally {
+    if (prev !== undefined) process.env.DSH_QUICK_SEND_VIEW_FILE = prev
+  }
+})
+
+test('defaultPhrasesFile: 环境变量可覆盖（共享给其他客户端时用）', () => {
+  const prev = process.env.DSH_QUICK_SEND_PHRASES_FILE
+  process.env.DSH_QUICK_SEND_PHRASES_FILE = path.join(tmpDir(), 'shared.json')
+  try {
+    assert.equal(defaultPhrasesFile(), process.env.DSH_QUICK_SEND_PHRASES_FILE)
+  } finally {
+    if (prev === undefined) delete process.env.DSH_QUICK_SEND_PHRASES_FILE
+    else process.env.DSH_QUICK_SEND_PHRASES_FILE = prev
+  }
 })

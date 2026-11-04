@@ -70,6 +70,9 @@ window.__ModuleLoader__.load({
         importEmpty: '文件里没有可导入的条目',
         importFail: '导入失败：{msg}',
         previewLabel: '插入后：',
+        dataFileLabel: '数据文件',
+        dataFileTip: '点击复制完整路径',
+        copied: '路径已复制',
       },
       en: {
         trigger: 'Phrases',
@@ -117,6 +120,9 @@ window.__ModuleLoader__.load({
         importEmpty: 'No entries found in that file',
         importFail: 'Import failed: {msg}',
         previewLabel: 'Result:',
+        dataFileLabel: 'Data file',
+        dataFileTip: 'Click to copy the full path',
+        copied: 'Path copied',
       },
     }
 
@@ -237,6 +243,10 @@ window.__ModuleLoader__.load({
       '.qs-trigger:hover{color:var(--dsw-alias-label-primary);}',
       '.qs-trigger.on{color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2);}',
       '.qs-trigger-badge{font-size:9px;opacity:.7;margin-left:2px;}',
+      '.qs-foot{display:flex;align-items:center;gap:5px;font-size:9px;color:var(--dsw-alias-label-secondary);opacity:.75;border-top:1px solid var(--dsw-alias-border-l2);padding-top:4px;flex:0 0 auto;}',
+      '.qs-foot-tag{flex:0 0 auto;}',
+      '.qs-foot-path{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left;font-family:ui-monospace,Consolas,monospace;cursor:pointer;}',
+      '.qs-foot-path:hover{color:var(--dsw-alias-label-primary);opacity:1;}',
     ].join('')
 
     // dock 模式覆盖：取消浮层定位，改为整行占位（不遮挡输入框，但会顶高输入区）
@@ -345,7 +355,10 @@ window.__ModuleLoader__.load({
 
       var inputActions = props && props.inputActions
 
-      var inputActions = props && props.inputActions
+      // 数据文件路径（面板底部小字显示，让用户随时知道数据存哪）
+      var pathState = React.useState(null) // { phrasesFile, viewFile }
+      var dataPaths = pathState[0]
+      var setDataPaths = pathState[1]
 
       // 只取 phase 原始值，避免每次敲键都重渲染整个面板
       function selectPhase(state) {
@@ -374,6 +387,21 @@ window.__ModuleLoader__.load({
           refresh()
         },
         [open],
+      )
+
+      // 面板底部显示当前数据文件位置：只取一次，失败就静默隐藏（纯提示，不影响主流程）
+      React.useEffect(
+        function () {
+          if (!open || dataPaths) return
+          requestJson('/__quick-send/paths')
+            .then(function (info) {
+              if (info && typeof info.phrasesFile === 'string') setDataPaths(info)
+            })
+            .catch(function () {
+              /* ignore */
+            })
+        },
+        [open, dataPaths],
       )
 
       // Esc 收起面板：编辑表单打开时不响应，避免误关正在编的内容
@@ -913,6 +941,30 @@ window.__ModuleLoader__.load({
 
       var toastNode = toast ? h('div', { className: 'qs-toast ' + toast.kind }, toast.text) : null
 
+      // 底部数据文件位置：纯提示，拿不到 paths 就不渲染（不影响主流程）
+      function copyPath() {
+        var p = dataPaths && dataPaths.phrasesFile
+        if (!p) return
+        function fallback() {
+          say('warn', p)
+        }
+        if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(p).then(function () {
+            say('ok', t('copied'))
+          }).catch(fallback)
+        } else {
+          fallback()
+        }
+      }
+      var footNode = dataPaths
+        ? h(
+            'div',
+            { className: 'qs-foot' },
+            h('span', { className: 'qs-foot-tag' }, t('dataFileLabel')),
+            h('span', { className: 'qs-foot-path', title: t('dataFileTip') + '\n' + dataPaths.phrasesFile, onClick: copyPath }, dataPaths.phrasesFile),
+          )
+        : null
+
       return h(
         'div',
         { className: 'qs-dock' },
@@ -924,6 +976,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'qs-list', ref: listRef }, bodyNodes),
           form,
           fileInput,
+          footNode,
         ]),
       )
     }

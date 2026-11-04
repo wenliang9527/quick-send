@@ -2,11 +2,13 @@
 
 [![npm version](https://img.shields.io/npm/v/@wenliang9527/dsh-quick-send.svg)](https://www.npmjs.com/package/@wenliang9527/dsh-quick-send)
 [![license](https://img.shields.io/npm/l/@wenliang9527/dsh-quick-send.svg)](https://github.com/wenliang9527/quick-send/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/tests-71%20passed-brightgreen.svg)](#测试)
+[![tests](https://img.shields.io/badge/tests-101%20passed-brightgreen.svg)](#测试)
 
 DSH 常用语快捷发送插件 —— 输入框旁的常用语浮层面板，**点一下插到光标处**（不覆盖、不自动发送）。
 
-与 ZCode 的 `quick-send` 插件**共享同一份内容源**，两侧各自维护置顶与排序。
+装完即用，数据默认存在 `~/.dsh/quick-send/phrases.json`，**不需要建任何文件夹**。
+若想与 ZCode 的 `quick-send` 插件共用同一份常用语，配置一下 `phrasesFile` 指向同一个文件即可
+（见 [两种装法](#两种装法)），两侧各自维护置顶与排序。
 
 ```
         ┌─ 常用语  2/3 ────────────────── ── ＋新建  ✕ ┐
@@ -132,19 +134,73 @@ AI 归纳只会**存进常用语库**，不会自动发送。你仍需在面板�
 > `captureInsertion()` 抓光标，`insertText(text, span)` 插入。返回 `false` 通常是
 > **面板打开期间用户改过草稿**，导致草稿版本变了——重抓一遍光标再试即成功。
 
-## 与 ZCode 共享内容
+## 数据存哪
 
-| 层 | 字段 | 位置 |
+插件有**两个**数据文件，职责不同：
+
+| 文件 | 存什么 | 默认位置 | 是否需要配置 |
+|---|---|---|---|
+| **内容文件** | 常用语本体：`id` `title` `text` `category` `createdAt` `updatedAt` | `~/.dsh/quick-send/phrases.json` | **不用** |
+| **视图文件** | 本侧界面状态：`pinned` `order` | `~/.dsh/quick-send/view.json` | **不用** |
+
+> 两个文件都**跟着用户主目录走**，装完直接用，**不需要手动建任何文件夹**。
+> 面板底部会显示当前实际使用的路径，点一下即可复制。
+
+`~` 在 Windows 上是 `C:\Users\<你的用户名>`。所以默认内容文件的实际位置是：
+
+```
+C:\Users\<你的用户名>\.dsh\quick-send\phrases.json
+```
+
+**只有想和别的客户端共享时**才需要改这个路径 —— 见下面两种装法。
+
+## 两种装法
+
+### 装法 A：只自己用（默认，绝大多数人）
+
+**什么都不用做。** 装完重启 DSH，首次保存时插件会自动创建
+`~/.dsh/quick-send/` 目录和 `phrases.json`。
+
+```bash
+dsh plugin --profile desktop add @wenliang9527/dsh-quick-send
+```
+
+- 数据在你自己机器上，插件作者接触不到
+- 不需要读懂 `shared-phrases` 是什么，跟它没有任何关系
+- 卸载插件不会删除数据文件
+
+### 装法 B：和 ZCode quick-send 共享常用语
+
+适用于**同一台机器上同时装了 DSH 和 ZCode**，想让两边的常用语是同一份。
+
+1. 选定共享文件位置，例如 `D:\shared-phrases\phrases.json`（目录不存在也行，会自动建）
+2. 在 DSH 的 `~/.dsh/profiles/<profile>/cordis.patch.yml` 里写：
+
+```yaml
+- id: quick-send
+  name: '@wenliang9527/dsh-quick-send'
+  config:
+    phrasesFile: 'D:\shared-phrases\phrases.json'
+```
+
+3. **ZCode 侧必须填同一个文件**（ZCode 用环境变量 `QUICK_SEND_PHRASES`，见其 README）
+4. 重启 DSH
+
+> **关键纪律：两边路径必须完全一致。** 填错成两个不同文件，会表现为
+> 「我在 DSH 加了，ZCode 看不到」——因为各写各的。
+
+共享时双方遵循的契约：
+
+| 层 | 字段 | 归属 |
 |---|---|---|
-| 内容（共享） | `id` `title` `text` `category` `createdAt` `updatedAt` | `D:\WORK_VSCODE\Vibe-coding\shared-phrases\phrases.json` |
-| 视图（本侧） | `pinned` `order` | `~/.dsh/quick-send/view.json` |
-
-完整契约见 [`shared-phrases/docs/CONTRACT.md`](../../../../shared-phrases/docs/CONTRACT.md)。
+| 内容 | `id` `title` `text` `category` `createdAt` `updatedAt` | **共享**，双写 |
+| 视图 | `pinned` `order` | **各侧本地**，互不影响 |
 
 - **双向写**，双方遵守同一纪律：全量读改写 + 临时文件原子替换 + 损坏 `.bad` 留证后空表启动
 - 一方新增/修改后，另一方**重新打开面板即可看到**（每次打开都重新拉取）
-- `pinned` / `order` 各侧本地，互不影响
 - **`body` 必须叫 `text`**：ZCode 侧若保留旧字段名，DSH 读到的正文会是空的
+
+完整契约见 [`shared-phrases/docs/CONTRACT.md`](../../../../shared-phrases/docs/CONTRACT.md)。
 
 ## 占位符支持矩阵
 
@@ -159,13 +215,16 @@ AI 归纳只会**存进常用语库**，不会自动发送。你仍需在面板�
 
 ## 配置
 
-在 `cordis.patch.yml` 的 `config` 里覆盖（改完**重启 DSH** 生效）：
+全部可选，不写就是默认值。写在 `cordis.patch.yml` 的 `config` 里（改完**重启 DSH** 生效）：
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
-| `phrasesFile` | `D:\WORK_VSCODE\Vibe-coding\shared-phrases\phrases.json` | 共享内容文件 |
-| `viewFile` | `~/.dsh/quick-send/view.json` | 本侧视图文件 |
+| `phrasesFile` | `~/.dsh/quick-send/phrases.json` | 内容文件。**仅在共享时需要改**，见装法 B |
+| `viewFile` | `~/.dsh/quick-send/view.json` | 本侧视图文件，一般不用改 |
 | `panelSlot` | `'overlay'` | 面板容器：`overlay` 浮层不挤压输入框；`dock` 固定整行、不遮挡但会顶高输入区 |
+
+也可以用环境变量覆盖（优先级低于 `config`）：
+`DSH_QUICK_SEND_PHRASES_FILE` / `DSH_QUICK_SEND_VIEW_FILE`。
 
 ```yaml
 - insert:
@@ -187,8 +246,8 @@ dsh plugin --profile desktop add @wenliang9527/dsh-quick-send
 # 从 GitHub 子目录
 dsh plugin --profile desktop add github:wenliang9527/quick-send#plugins/dsh-quick-send
 
-# 本地目录（开发时）
-dsh plugin --profile desktop add link:D:/WORK_VSCODE/Vibe-coding/quick-send/plugins/dsh-quick-send
+# 本地目录（开发时，路径换成你自己的仓库位置）
+dsh plugin --profile desktop add link:<你的仓库>/plugins/dsh-quick-send
 ```
 
 或在插件管理里装本地目录。装完**重启 DSH**（Host 半区改动需要重启），然后 `Ctrl+R` 刷新界面。
@@ -200,7 +259,7 @@ dsh plugin --profile desktop add link:D:/WORK_VSCODE/Vibe-coding/quick-send/plug
 
 ```powershell
 node <dsh>/resources/runtime/primary-runtime/dependencies/pnpm/bin/pnpm.cjs add `
-  link:D:/WORK_VSCODE/Vibe-coding/quick-send/plugins/dsh-quick-send `
+  link:<你的仓库>/plugins/dsh-quick-send `
   --store-dir "C:\Users\<you>\.pnpm\store\v11" `
   --dir "C:\Users\<you>\.dsh\profiles\desktop"
 ```
@@ -244,8 +303,8 @@ dsh-quick-send/
 │  ├─ agent-tools.js        4 个 agent 工具（list/add/update/delete）
 │  └─ client.js             Client 半区：📚 按钮 + 浮层面板（ModuleLoader bundle）
 └─ test/
-   ├─ store.test.mjs        存储与占位符单测（25 项）
-   ├─ client.test.mjs       Client 半区运行时测试（21 项，含 Hooks 顺序守门）
+   ├─ store.test.mjs        存储、占位符、默认路径守门（28 项）
+   ├─ client.test.mjs       Client 半区运行时测试（23 项，含 Hooks 顺序守门）
    ├─ e2e.test.mjs          真实 HTTP 端到端测试（25 项）
    └─ agent-tools.test.mjs  Agent 工具测试（25 项）
 ```
@@ -270,7 +329,7 @@ node --test test/store.test.mjs test/client.test.mjs test/e2e.test.mjs test/agen
 
 **共 96 项，全部通过。**
 
-### store.test.mjs（25 项）
+### store.test.mjs（28 项）
 
 - **占位符**：三个时间宏按本地时区、占位符内允许空格、`{{workspace}}`/`{{clipboard}}` 原样保留、
   未知占位符保留、多处出现各自展开、空/非字符串安全
@@ -280,7 +339,7 @@ node --test test/store.test.mjs test/client.test.mjs test/e2e.test.mjs test/agen
 - **视图**：缺失返回空对象、往返一致、非法字段规范化、损坏降级
 - **合并排序**：置顶优先 → 分类 → order、同段内按 order、未分类排末尾、视图缺失补默认值
 
-### client.test.mjs（21 项）
+### client.test.mjs（23 项）
 
 用最小 React 替身在 Node 里真实执行 `client.js` 的组件渲染，覆盖：
 
@@ -379,7 +438,8 @@ src/client.js  src/expand.js  src/index.js  src/store.js
 | GitHub 直装 | `dsh plugin --profile desktop add github:<owner>/<repo>` | 需先推仓库 |
 | npm | `npm publish` | 需先 `npm login` |
 
-> ⚠️ 任何 publish / tag push 都要先确认版本号与轨道。本插件尚未建 git 仓库，无 remote。
+> ⚠️ 任何 publish / tag push 都要先确认版本号与轨道。
+> 仓库：<https://github.com/wenliang9527/quick-send>（子目录 `plugins/dsh-quick-send`）。
 
 ## 已知限制
 
@@ -392,3 +452,28 @@ src/client.js  src/expand.js  src/index.js  src/store.js
 - **键盘导航只在搜索框内生效**：从按钮点开面板后，需先点一下搜索框才能用 `↑`/`↓`/`Enter`。
 - **`panelSlot` 改动需重启 DSH**：Client 半区通过 HTTP 读取该配置，不支持热切换槽位。
 - **导入只做新增，不做去重**：同一文件导入两次会产生重复条目（id 不参与匹配）。
+
+## 变更记录
+
+### 0.2.2 —— 修复默认数据路径写死作者机器路径
+
+**这是一个会影响所有非作者用户的 bug，建议升级。**
+
+- **修复**：`defaultPhrasesFile()` 的默认值原本是 `D:\WORK_VSCODE\Vibe-coding\shared-phrases\phrases.json`
+  （开发机路径被当成默认值），现改为 `~/.dsh/quick-send/phrases.json`。
+  旧默认值的后果不是报错，而是陌生人保存时会在**自己的 D 盘**凭空创建
+  `WORK_VSCODE\Vibe-coding\shared-phrases\` 目录，看起来能用但污染磁盘。
+- **行为变化**：不配置 `phrasesFile` 时，数据落在 `~/.dsh/quick-send/phrases.json`。
+  **原本靠旧默认值共享的用户**（比如与 ZCode 共用），需要显式配置 `phrasesFile`
+  指回原共享文件，否则会看到空列表——**旧数据不会丢失，只是不再被默认读到**。
+  本机已在此 profile 的 `cordis.patch.yml` 里补上该配置。
+- **新增**：面板底部显示当前实际使用的数据文件路径，点击可复制。
+- **文档**：README 拆成「装法 A 只自己用（零操作）」与「装法 B 与 ZCode 共享」；
+  新增「数据存哪」路径表。
+- **测试**：新增 3 条回归守门（默认路径必须位于 `homedir()` 下、不得含 `WORK_VSCODE`、
+  环境变量可覆盖）+ 2 条面板路径显示用例，共 101 项通过。
+
+### 0.2.1 / 0.2.0 —— 仅文档 / Agent 工具
+
+见 git 历史。0.2.0 新增 4 个 agent 工具（`quick_send_list/add/update/delete`），
+0.2.1 为纯文档更新（补充「让 AI 帮你总结归纳常用语」用法）。

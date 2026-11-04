@@ -519,3 +519,37 @@ test('导出按钮存在，且有导入的文件选择器', () => {
   assert.equal(fileInputs.length, 1, '应有隐藏的 file input')
   assert.equal(fileInputs[0].props.accept, '.json,application/json')
 })
+
+// ---------------------------------------------------------------- 数据文件路径提示
+
+// hook 池顺序（守门：本组用例依赖它，改 Panel 顶部结构时这里会先炸）
+//   0 useOpen.state  1 useOpen.effect  2 快照  3 query  4 cat  5 toast  6 hi  7 edit  8 del
+//   9 toastTimer  10 listRef  11 deleteTimer  12 数据路径
+test('面板底部显示当前数据文件路径（来自 /__quick-send/paths）', () => {
+  const c = loadClient()
+  const props = makeProps()
+  c.initPool(props)
+  const { out } = c.renderPanel(props, (p) => {
+    p[0] = { v: true }
+    p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: [] } }
+    p[12] = { v: { phrasesFile: 'C:\\Users\\me\\.dsh\\quick-send\\phrases.json', viewFile: 'C:\\Users\\me\\view.json' } }
+  })
+  const foot = findAll(out, (n) => n.props && String(n.props.className || '').includes('qs-foot'))
+  assert.ok(foot.length > 0, '应渲染底部路径提示')
+  const pathNode = findAll(out, (n) => n.props && String(n.props.className || '').includes('qs-foot-path'))
+  assert.equal(pathNode.length, 1)
+  assert.ok(String(pathNode[0].children[0]).includes('phrases.json'))
+})
+
+test('拿不到路径时底部提示整块不渲染（不报错、不留空行）', () => {
+  const c = loadClient()
+  const props = makeProps()
+  c.initPool(props)
+  const { out } = c.renderPanel(props, (p) => {
+    p[0] = { v: true }
+    p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: [] } }
+    p[12] = { v: null }
+  })
+  const foot = findAll(out, (n) => n.props && String(n.props.className || '').includes('qs-foot'))
+  assert.equal(foot.length, 0)
+})

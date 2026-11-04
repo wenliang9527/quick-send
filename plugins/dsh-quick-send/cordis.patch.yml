@@ -3,17 +3,23 @@
 # 插入一行，同时挂上「宿主半区 src/index.js」与「浏览器半区 src/client.js」。
 # 两个半区同属一个包，由 package.json 的 dsh.bundle / dsh.client 声明。
 #
-# config 可覆盖数据文件位置与面板位置（不写则用内置默认值）：
-#   phrasesFile: 共享内容文件（默认 D:\WORK_VSCODE\Vibe-coding\shared-phrases\phrases.json）
-#   viewFile:    本侧视图文件（默认 ~/.dsh/quick-send/view.json）
-#   panelSlot:   面板容器，'overlay'（默认，浮层不挤压输入框）| 'dock'（固定整行，不遮挡但顶高输入区）
+# 【默认值 —— 不写 config 就是这套，开箱即用，不需要建任何目录】
+#   phrasesFile: ~/.dsh/quick-send/phrases.json      内容文件（常用语本体）
+#   viewFile:    ~/.dsh/quick-send/view.json         本侧视图（置顶/排序）
+#   panelSlot:   'overlay'（浮层，不挤压输入框）
 #
-# 注：panelSlot 由 Host 半区经 /__quick-send/paths 告知 Client 半区，改完需重启 DSH。
+# 【什么时候才需要写 config】
+#   只有想和别的客户端（如 ZCode quick-send）共享同一份常用语时，才把 phrasesFile
+#   指向那个共享文件。单机自用保持默认即可，不要去改。
+#   共享时必须两侧填同一个路径，否则各写各的、互不可见。
+#
+# panelSlot 由 Host 半区经 /__quick-send/paths 告知 Client 半区，改完需重启 DSH。
 
 - insert:
     - id: quick-send
       name: '@wenliang9527/dsh-quick-send'
+      # ---- 下面三行仅在「与 ZCode 共享」时需要；单机自用请保持注释状态 ----
       # config:
-      #   phrasesFile: 'D:\WORK_VSCODE\Vibe-coding\shared-phrases\phrases.json'
+      #   phrasesFile: 'D:\path\to\shared-phrases\phrases.json'   # 两侧都填同一个文件
       #   viewFile: 'C:\Users\<you>\.dsh\quick-send\view.json'
       #   panelSlot: 'overlay'
