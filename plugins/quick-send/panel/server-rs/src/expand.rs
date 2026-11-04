@@ -41,7 +41,7 @@ pub fn expand(text: &str, vars: &Map<String, Value>) -> Result<String, String> {
         match name {
             "date" => Ok(date.clone()),
             "time" => Ok(time.clone()),
-            "datetime" => Ok(format!("{} {}", date, time)),
+            "datetime" => Ok(now.format("%Y-%m-%d %H:%M:%S").to_string()),
             "workspace" => Ok(workspace_name()),
             "clipboard" => {
                 // 与 JS 版一致：空剪贴板/读取失败都展开为空串,不报错

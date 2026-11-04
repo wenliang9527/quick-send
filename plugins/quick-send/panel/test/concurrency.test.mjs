@@ -18,7 +18,7 @@ const SERVER = join(here, "..", "server", "bin", "quick-send-server.exe");
 function startServer(dataDir) {
   const child = spawn(SERVER, [], {
     stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, QUICK_SEND_DATA: dataDir },
+    env: { ...process.env, QUICK_SEND_DATA: dataDir, QUICK_SEND_PHRASES: join(dataDir, "phrases.json") },
   });
   let buf = "";
   const pending = new Map();
@@ -88,9 +88,9 @@ test("双 server 同数据目录并发写:文件合法、视图一致、无崩�
     assert.deepEqual(la, lb, "两进程最终视图一致");
 
     // 文件始终合法 JSON
-    const parsed = JSON.parse(readFileSync(join(dir, "snippets.json"), "utf8"));
-    assert.ok(Array.isArray(parsed.snippets));
-    assert.equal(parsed.snippets.length, la.snippets.length);
+    const parsed = JSON.parse(readFileSync(join(dir, "phrases.json"), "utf8"));
+    assert.ok(Array.isArray(parsed.phrases)); // 共享文件字段是 phrases
+    assert.equal(parsed.phrases.length, la.snippets.length); // 与工具层合成视图条数一致
 
     // 两进程仍存活（无崩溃）
     assert.equal(a.child.exitCode, null);

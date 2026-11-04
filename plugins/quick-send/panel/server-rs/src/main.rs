@@ -122,6 +122,7 @@ fn main() {
     let mut stdout = std::io::stdout();
     let mut line = String::new();
 
+    store::migrate_once(); // 旧 snippets.json → 共享架构(合并迁移,幂等,best-effort)
     eprint_log(&format!(
         "rust server ready v{}: panel/list/save/delete/reorder/rename/copy/render -> {}",
         tools::VERSION,

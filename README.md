@@ -3,11 +3,11 @@
 ZCode 会话侧栏「快捷发送」面板：常用语管理，一键复制到剪贴板或发送。
 设计与调研结论见 [docs/design.md](docs/design.md)（含宿主 API 调研、spike 实测、性能优化记录）。
 
-## 当前状态（v0.4.0）
+## 当前状态（v0.5.0）
 
 - M0 Spike ✅ / M1 MVP ✅ / M2 完整功能 ✅ / M3 收尾 ✅
-- **v0.4.0：server 由 Node 重写为 Rust 原生单文件 exe——常驻内存 54.5MB → 3.8MB（14×），exe 仅 0.5MB**
-  面板/数据/工具协议零变化，同一套测试矩阵全过（Rust 单元 14 + 冒烟 33 + 并发 1 + i18n 3）
+- **v0.4.0：server 重写为 Rust 原生单文件 exe——常驻内存 54.5MB → 3.8MB（14×），exe 仅 0.5MB**
+- **v0.5.0：常用语与 DSH 侧双向共享**（shared-phrases 契约）：内容进共享 phrases.json（严格六字段），置顶/排序留本地 view.json；旧 snippets.json 启动自动合并迁移（.migrated 留证）
 
 ## 功能
 
@@ -18,7 +18,8 @@ ZCode 会话侧栏「快捷发送」面板：常用语管理，一键复制到�
   - **▶ 发送** → 占位符展开 → 经宿主确认框直达会话（带"来自插件"署名）
 - 占位符（server 展开；未知原样保留）：`{{date}}` `{{time}}` `{{datetime}}` `{{workspace}}` `{{clipboard}}`
 - 界面跟随宿主语言（zh/en）与主题；搜索词/分类 chips 会话内记忆
-- 数据：`${ZCODE_PLUGIN_DATA}/snippets.json`（物理 `~/.zcode/cli/plugins/data/quick-send@quick-send-local/`），原子写、损坏自愈、上限 200 条/10KB/分类 20 字
+- 数据分层（CONTRACT.md）：**内容** = 共享 `phrases.json`（默认 `D:\WORK_VSCODE\Vibe-coding\shared-phrases\`，插件设置可改路径），DSH/ZCode 双向写，原子替换+损坏自愈+schemaVersion 守卫；**视图**（置顶/排序）= 本地 `view.json`
+- 上限 200 条/正文 10KB/分类 20 字；占位符 `{{datetime}}` 带秒（契约），`{{clipboard}}` 仅 ZCode 侧
 
 ## 资源占用（实测）
 

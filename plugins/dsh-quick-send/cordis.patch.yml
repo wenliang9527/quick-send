@@ -1,0 +1,15 @@
+# dsh-quick-send 的 profile 配置层。
+#
+# 插入一行，同时挂上「宿主半区 src/index.js」与「浏览器半区 src/client.js」。
+# 两个半区同属一个包，由 package.json 的 dsh.bundle / dsh.client 声明。
+#
+# config 可覆盖数据文件位置（不写则用内置默认值）：
+#   phrasesFile: 共享内容文件（默认 D:\WORK_VSCODE\Vibe-coding\shared-phrases\phrases.json）
+#   viewFile:    本侧视图文件（默认 ~/.dsh/quick-send/view.json）
+
+- insert:
+    - id: quick-send
+      name: 'dsh-quick-send'
+      # config:
+      #   phrasesFile: 'D:\WORK_VSCODE\Vibe-coding\shared-phrases\phrases.json'
+      #   viewFile: 'C:\Users\<you>\.dsh\quick-send\view.json'

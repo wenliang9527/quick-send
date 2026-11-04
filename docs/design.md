@@ -469,6 +469,28 @@ jitless 无效),SDK 仅 ~13MB,业务代码近乎免费 → **在 Node 内无优�
 
 测试矩阵(v0.4.0 全过):Rust 单元 14 + i18n 3 + 并发 1(52ms,Node 版 465ms)+ 冒烟 33。
 
+## 15. 共享架构(v0.5.0,2026-11-04)
+
+与 DSH 侧 `dsh-quick-send` 共用常用语,契约见
+`D:\WORK_VSCODE\Vibe-coding\shared-phrases\docs\CONTRACT.md`(双方定稿)。
+
+- **分层**:内容(title/text/category/时间戳)= 共享 `phrases.json`,严格六字段+schemaVersion;
+  视图(pinned/order)= 各侧本地 view.json(ZCode 侧在 ${ZCODE_PLUGIN_DATA})
+- **双向写**,同一纪律:全量读改写 + tmp→rename 原子替换 + 损坏 .bad 自愈;
+  schemaVersion 不认识 → 读空表 + 拒写
+- **合成**:无 view 条目按 (createdAt,id) 分配确定性虚拟序(全局 max order 之后),
+  被 save/reorder 触碰即在 view 固化——DSH 新建的条目在 ZCode 排序稳定
+- **迁移**:旧 snippets.json 启动时一次性**合并**进共享文件(同 id 以共享侧为准),
+  视图随迁,旧文件 .migrated 留证;真实数据演练通过
+- **占位符对齐**:{{datetime}} 改带秒(YYYY-MM-DD HH:mm:ss,契约);{{clipboard}} 仅
+  ZCode 侧支持(契约注明);{{workspace}} DSH 首版原样保留
+- **路径可配置**:plugin.json userConfig.phrasesPath → env QUICK_SEND_PHRASES,
+  替换失败回退默认共享路径
+- **协议零变化**:工具层仍输出 body 字段(=共享侧 text),面板 app.js 未改
+
+测试矩阵(v0.5.0):Rust 单元 19(新增严格形状/外部互写/版本守卫/虚拟序固化/合并迁移)
++ i18n 3 + 并发 1 + 冒烟 33,全过。
+
 ---
 
 ## 附录 A:调研证据索引

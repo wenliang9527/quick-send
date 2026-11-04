@@ -18,7 +18,7 @@ const check = (name, cond, detail) => {
 
 const child = spawn("server/bin/quick-send-server.exe", [], {
   stdio: ["pipe", "pipe", "pipe"],
-  env: { ...process.env, QUICK_SEND_DATA: dataDir },
+  env: { ...process.env, QUICK_SEND_DATA: dataDir, QUICK_SEND_PHRASES: join(dataDir, "phrases.json") },
 });
 let buf = "";
 const pending = new Map();
@@ -111,11 +111,11 @@ try {
   check("删除不存在→not_found", r.isError && r.data.error?.code === "not_found");
 
   // ── 损坏自愈 ──
-  rmSync(join(dataDir, "snippets.json"));
-  writeFileSync(join(dataDir, "snippets.json"), "{broken json!", "utf8");
+  rmSync(join(dataDir, "phrases.json"));
+  writeFileSync(join(dataDir, "phrases.json"), "{broken json!", "utf8");
   r = await call("list_snippets");
   check("损坏→空数据启动", !r.isError && r.data.snippets.length === 0);
-  check("损坏留证 .bad", existsSync(join(dataDir, "snippets.json.bad")));
+  check("损坏留证 .bad", existsSync(join(dataDir, "phrases.json.bad")));
 
   // ── M2 分类 ──
   r = await call("save_snippet", { snippet: { title: "catA", body: "bA", category: "嵌入式" } });
