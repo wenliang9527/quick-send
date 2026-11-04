@@ -345,7 +345,9 @@ pub fn save_snippet(input: &Value) -> Result<Vec<Snippet>, StoreError> {
     let title = obj.get("title").and_then(Value::as_str).unwrap_or("").trim().to_string();
     let text = obj.get("body").and_then(Value::as_str).unwrap_or("").to_string();
     let category = obj.get("category").and_then(Value::as_str).unwrap_or("").trim().to_string();
-    let pinned = obj.get("pinned").and_then(Value::as_bool).unwrap_or(false);
+    // pinned 缺省 = 保留现值(Option 语义)。面板路径始终显式传;agent 直接 save 更新时
+    // 不该因为没带 pinned 把已有置顶冲掉
+    let pinned_input = obj.get("pinned").and_then(Value::as_bool);
     let id = obj.get("id").and_then(Value::as_str).unwrap_or("");
 
     validate_phrase(&title, &text, &category).map_err(|e| ("validation", e))?;
@@ -375,12 +377,14 @@ pub fn save_snippet(input: &Value) -> Result<Vec<Snippet>, StoreError> {
         });
     }
 
-    // 视图侧:固化/更新 pinned;order 已落盘则保持,否则沿用当前合成序（位置不动）
+    // 视图侧:固化/更新 pinned(缺省保留现值);order 已落盘则保持,否则沿用当前合成序（位置不动）
+    let prev_pinned = view.get(&target_id).map(|v| v.pinned);
     let current = synth(&shared.phrases, &view)
         .into_iter()
         .find(|s| s.id == target_id)
         .map(|s| s.order);
     if let Some(order) = current {
+        let pinned = pinned_input.unwrap_or_else(|| prev_pinned.unwrap_or(false));
         view.insert(target_id.clone(), ViewEntry { pinned, order });
     }
     save_shared(&shared).map_err(|e| ("validation", e))?;
@@ -784,6 +788,20 @@ mod tests {
         assert_eq!(r["added"], 0);
         assert_eq!(r["failed"].as_array().unwrap().len(), 2);
         assert_eq!(list_snippets().len(), MAX_SNIPPETS);
+    }
+
+    #[test]
+    fn save_without_pinned_keeps_existing_pin() {
+        // agent 直接 save 更新不带 pinned 字段:置顶必须保留(不能被默认 false 冲掉);
+        // 显式传 false 才取消置顶
+        let (_g, _dir) = isolated();
+        let r = save_snippet(&json!({"title":"t","body":"b","pinned":true})).unwrap();
+        let id = r[0].id.clone();
+        assert!(list_snippets()[0].pinned);
+        save_snippet(&json!({"id":id,"title":"t2","body":"b2"})).unwrap(); // 无 pinned 字段
+        assert!(list_snippets()[0].pinned, "缺省 pinned 应保留置顶");
+        save_snippet(&json!({"id":id,"title":"t3","body":"b3","pinned":false})).unwrap();
+        assert!(!list_snippets()[0].pinned, "显式 false 才取消置顶");
     }
 
     #[test]

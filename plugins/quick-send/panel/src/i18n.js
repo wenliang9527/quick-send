@@ -45,6 +45,9 @@ const ZH = {
   sendFailed: (m) => `发送失败：${m}`,
   failed: (m) => `失败：${m}`,
   saved: "已保存",
+  refresh: "刷新（agent 新增/改动后点此更新列表）",
+  refreshed: "已刷新",
+  refreshFailed: (m) => `刷新失败：${m}`,
   initFailed: (m) => `初始化失败：${m}`,
 };
 
@@ -91,6 +94,9 @@ const EN = {
   sendFailed: (m) => `Send failed: ${m}`,
   failed: (m) => `Failed: ${m}`,
   saved: "Saved",
+  refresh: "Refresh (pick up snippets added/changed by the agent)",
+  refreshed: "Refreshed",
+  refreshFailed: (m) => `Refresh failed: ${m}`,
   initFailed: (m) => `Init failed: ${m}`,
 };
 

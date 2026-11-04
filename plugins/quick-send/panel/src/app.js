@@ -14,10 +14,11 @@
 import { App, applyDocumentTheme } from "@modelcontextprotocol/ext-apps";
 import { stringsFor } from "./i18n.js";
 
-const app = new App({ name: "quick-send", version: "0.5.5" }, {});
+const app = new App({ name: "quick-send", version: "0.5.6" }, {});
 
 const els = {
   search: document.getElementById("search"),
+  btnRefresh: document.getElementById("btn-refresh"),
   btnNew: document.getElementById("btn-new"),
   chips: document.getElementById("chips"),
   list: document.getElementById("list"),
@@ -81,9 +82,12 @@ async function call(name, args) {
 }
 
 function applySnippets(snippets) {
+  // 数据刷新（含 ⟳）后保持列表滚动位置：整表重渲染会清空 scrollTop，条目多时跳顶明显
+  const keepScroll = els.list.scrollTop;
   state.snippets = Array.isArray(snippets) ? snippets : [];
   state.openMenuId = null;
   render();
+  els.list.scrollTop = keepScroll;
 }
 
 // ── widgetState（FR-12：query/category 会话内记忆）──
@@ -287,6 +291,23 @@ async function mutate(toolName, args) {
   }
 }
 
+// 手动刷新：agent 侧 bulk_add_snippets 等改数据没有推送通道（ext-apps 无 server→UI 通知），
+// 点按钮重拉全量。与面板自身写操作共用 applySnippets。
+async function refreshList() {
+  els.btnRefresh.disabled = true;
+  try {
+    const data = await call("list_snippets");
+    applySnippets(data.snippets);
+    setStatus(t.refreshed, "ok");
+    return true;
+  } catch (e) {
+    setStatus(t.refreshFailed(e.message), "err");
+    return false;
+  } finally {
+    els.btnRefresh.disabled = false;
+  }
+}
+
 async function doCopy(s, btn) {
   btn.disabled = true;
   setStatus(t.copyPending, "pending");
@@ -373,6 +394,7 @@ function applyI18n() {
   document.title = t.appTitle;
   document.querySelector("h1").textContent = t.appTitle;
   els.search.placeholder = t.searchPlaceholder;
+  els.btnRefresh.title = t.refresh;
   els.btnNew.textContent = t.new;
   els.drawerTitle.textContent = state.editing?.id ? t.drawerEdit : t.drawerNew;
   document.querySelector("label[for=f-title]").textContent = t.fieldTitle;
@@ -410,7 +432,18 @@ els.search.addEventListener("input", () => {
   scheduleSaveWidgetState();
   render();
 });
+els.btnRefresh.onclick = () => void refreshList();
 els.btnNew.onclick = () => openEditor(null);
+// 编辑抽屉快捷键：Esc 关闭、Ctrl/Cmd+Enter 保存（事件在 connect 前注册）
+document.addEventListener("keydown", (e) => {
+  if (!state.editing) return;
+  if (e.key === "Escape") {
+    closeEditor();
+  } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    void saveEditor();
+  }
+});
 els.btnCancel.onclick = closeEditor;
 els.btnSave.onclick = () => void saveEditor();
 els.overlay.addEventListener("click", (e) => {

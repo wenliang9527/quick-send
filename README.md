@@ -3,7 +3,7 @@
 ZCode 会话侧栏「快捷发送」面板：常用语管理，一键复制到剪贴板或发送。
 设计与调研结论见 [docs/design.md](docs/design.md)（含宿主 API 调研、spike 实测、性能优化记录）。
 
-## 当前状态（v0.5.5）
+## 当前状态（v0.5.6）
 
 - M0 Spike ✅ / M1 MVP ✅ / M2 完整功能 ✅ / M3 收尾 ✅
 - **v0.4.0：server 重写为 Rust 原生单文件 exe——常驻内存 54.5MB → 3.8MB（14×），exe 仅 0.5MB**
@@ -13,6 +13,7 @@ ZCode 会话侧栏「快捷发送」面板：常用语管理，一键复制到�
 - **v0.5.3：纯打包修复**——0.5.2 的安装快照早于市场刷新（缺 commands/），且版本号相同导致更新按钮不再触发；bump 版本号触发重装（§6 SOP 实例）
 - **v0.5.4：分类建议弃用原生 datalist**（webview 里弹层悬空压内容区）→ 输入框下方内联 chips（点击填入，主题配色一致）
 - **v0.5.5：agent 整理常用语**——新增 `bulk_add_snippets` 工具（一次调用批量写入：逐条校验、完全重复自动跳过、**整批一次原子写**，返回逐条结果）+ 斜杠命令 `/quick-send-organize` 固化五步纪律（查重→草稿→**等用户确认**→写入→汇报）。跨端对称：DSH 侧同期实现 quick_send_list/add/update 工具
+- **v0.5.6：面板手动刷新 + agent 工具一致性修复**——① 头部新增 ⟳ 按钮：agent 侧改数据（bulk_add_snippets 等）没有 server→UI 推送通道（ext-apps 无该能力），面板原来只在打开时拉一次列表，点一下重拉全量（不做轮询）；② `list_snippets`/`render_snippet` 改为 agent 可见（原 app-only，但 /quick-send、/quick-send-organize、bulk 描述三处流程都要求 agent 调它们——命令路径实际执行不了）；③ save_snippet 更新时不带 pinned 保留现值（原来默认 false 会冲掉置顶）；④ 编辑抽屉 Esc 关闭 / Ctrl+Enter 保存、列表刷新后保持滚动位置
 
 ## 功能
 
@@ -21,6 +22,7 @@ ZCode 会话侧栏「快捷发送」面板：常用语管理，一键复制到�
 - 每条两个动作：
   - **📋 复制** → 占位符展开 → 写系统剪贴板（~400ms）→ 粘贴到发送栏改后发送
   - **▶ 发送** → 占位符展开 → 经宿主确认框直达会话（带"来自插件"署名）
+- **⟳ 手动刷新**：agent（bulk_add_snippets 等）或 DSH 侧改动共享文件后，点一下重拉全量（ext-apps 无 server→UI 推送，不做轮询）
 - 占位符（server 展开；未知原样保留）：`{{date}}` `{{time}}` `{{datetime}}` `{{workspace}}` `{{clipboard}}`
 - 界面跟随宿主语言（zh/en）与主题；搜索词/分类 chips 会话内记忆
 - 会话内快捷打开：斜杠命令 **`/quick-send`**（直接出面板卡片；带标题关键词则直接展开该条，如 `/quick-send 复位日志`）；插件卡片「打开」按钮直达侧栏

@@ -271,19 +271,21 @@ ZCode Desktop
 
 | 工具 | 入参 | 出参 | 说明 |
 |---|---|---|---|
-| `list_snippets` | – | `{ snippets: Snippet[] }` | 全量;面板启动及每次写操作后调用 |
-| `save_snippet` | `{ snippet: Snippet }`(有 `id` 即更新) | `{ snippets }` | 校验:title/body 非空、长度上限;新条目 server 生成 id/createdAt |
+| `panel` | – | 文本确认 | 打开面板(surface 入口;agent 可见) |
+| `list_snippets` | – | `{ snippets: Snippet[] }` | 全量;面板启动及每次写操作后调用;agent 查重/检索用(可见性见下) |
+| `save_snippet` | `{ snippet: Snippet }`(有 `id` 即更新) | `{ snippets }` | 校验:title/body 非空、长度上限;新条目 server 生成 id/createdAt;pinned 缺省保留现值(v0.5.6) |
 | `delete_snippet` | `{ id }` | `{ snippets }` | 不存在返回错误 |
 | `reorder_snippet` | `{ id, direction: "up"\|"down" }` | `{ snippets }` | 组内相邻交换 order |
 | `rename_category` | `{ from, to }` | `{ snippets }` | 批量改分类 |
-| `render_snippet` | `{ id, vars?: Record<string,string> }` | `{ title, expanded }` | 展开占位符,不落剪贴板;供发送路径用 |
-| `copy_snippet` | `{ id, vars? }` | `{ ok, preview }` | 展开 → Set-Clipboard;preview 供 Toast 显示(截 80 字) |
+| `bulk_add_snippets` | `{ phrases: [{title, body, category?}] }` | `{ added, skippedDuplicates, failed, snippets }` | agent 整理路径(v0.5.5):逐条校验/完全重复跳过/整批一次原子写 |
+| `render_snippet` | `{ id }` | `{ title, text }` | 展开占位符,不落剪贴板;发送路径与 agent 直取(v0.5.6 起 agent 可见) |
+| `copy_snippet` | `{ id }` | `{ ok, preview }` | 展开 → Set-Clipboard;preview 供 Toast 显示(截 80 字) |
 
 约定:
 
-- 所有工具 `visibility: ["app"]`(page-only,不进模型上下文,不污染对话)
+- 可见性三档(v0.5.6 定稿):`panel`/`list_snippets`/`render_snippet`/`bulk_add_snippets` **agent 可见**(无 `_meta`,宿主不隐藏)——/quick-send 与 /quick-send-organize 流程依赖 list/render;`save_snippet`/`delete_snippet`/`reorder_snippet`/`rename_category`/`copy_snippet` 保持 `_meta ui.visibility:["app"]` 仅面板可调
 - 错误统一 `{ error: { code, message } }`;code:`not_found` / `validation` / `clipboard_failed` / `io`
-- `vars` 允许面板透传自定义变量(首版 UI 不暴露,协议预留)
+- `vars` 自定义变量为协议预留:expand 支持优先级覆盖,但 copy/render 的 tools/call 入口当前未接线(面板与 agent 均传不了)
 
 ### 7.1 占位符规范(server 端展开)
 
@@ -448,6 +450,9 @@ S1–S3 任一失败即回到设计评审;S4/S5 失败有既定回退,不阻塞�
 - 从选中文本/当前剪贴板快速存为常用语
 - 若官方开放 composer 草稿 API:复制按钮升级为"填入发送栏"(本方案的 copy 路径一行换掉)
 - 提交到 ZCode 官方市场(需按官方 zip 规范打包)
+- phrases.json mtime 缓存:当前每次工具调用全量读盘解析(条目少时毫秒级无感);条目上千/正文很长时改为 stat mtime 未变则复用内存解析(**必须** mtime 判定——跨进程与 DSH 双向写,不能无脑缓存)
+- server→UI 推送:ext-apps 无该能力(2026-11-04 查证),⟳ 手动刷新是当前解;官方开放通知通道后升级为自动刷新
+- 长正文卡片展开交互:卡片正文两行截断,全文需点编辑;可加点击展开/收起
 
 ## 14. 性能优化记录(v0.4.0,2026-11-04)
 

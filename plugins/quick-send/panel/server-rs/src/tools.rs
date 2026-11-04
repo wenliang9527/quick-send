@@ -7,7 +7,7 @@ use serde_json::{json, Map, Value};
 
 pub const RESOURCE_URI: &str = "ui://quick-send/panel.html";
 pub const SURFACE_ID: &str = "quick-send";
-pub const VERSION: &str = "0.5.5";
+pub const VERSION: &str = "0.5.6";
 const PREVIEW_CHARS: usize = 80;
 
 fn schema_empty() -> Value {
@@ -41,9 +41,8 @@ pub fn tools_list() -> Value {
         json!({
             "name": "list_snippets",
             "title": "list_snippets",
-            "description": "[面板专用] 常用语全量列表",
-            "inputSchema": schema_empty(),
-            "_meta": meta_app()
+            "description": "常用语全量列表（查重/检索用；流程纪律：bulk_add_snippets 前先调本工具查重）",
+            "inputSchema": schema_empty()
         }),
         json!({
             "name": "save_snippet",
@@ -151,14 +150,13 @@ pub fn tools_list() -> Value {
         json!({
             "name": "render_snippet",
             "title": "render_snippet",
-            "description": "[面板专用] 取展开后的文本（供发送路径），不落剪贴板",
+            "description": "按 id 取展开占位符后的文本（发送路径/agent 直取均可；面板发送按钮也走这里）",
             "inputSchema": {
                 "type": "object",
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "properties": { "id": { "type": "string", "minLength": 1 } },
                 "required": ["id"]
-            },
-            "_meta": meta_app()
+            }
         }),
     ];
     json!({ "tools": tools })
