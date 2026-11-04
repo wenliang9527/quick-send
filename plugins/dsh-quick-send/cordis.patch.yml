@@ -12,7 +12,7 @@
 
 - insert:
     - id: quick-send
-      name: 'dsh-quick-send'
+      name: '@wenliang9527/dsh-quick-send'
       # config:
       #   phrasesFile: 'D:\WORK_VSCODE\Vibe-coding\shared-phrases\phrases.json'
       #   viewFile: 'C:\Users\<you>\.dsh\quick-send\view.json'

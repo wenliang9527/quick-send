@@ -5,10 +5,10 @@
     "namespace": "quicksend",
     "name": "quick-send",
     "coordinate": "quicksend/quick-send",
-    "packageName": "dsh-quick-send"
+    "packageName": "@wenliang9527/dsh-quick-send"
   },
   "names": {
-    "pluginNames": ["dsh-quick-send"],
+    "pluginNames": ["@wenliang9527/dsh-quick-send"]",
     "loaderIds": ["quick-send"],
     "services": [],
     "tools": [],

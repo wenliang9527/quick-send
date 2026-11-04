@@ -1,9 +1,22 @@
 {
-  "name": "dsh-quick-send",
+  "name": "@wenliang9527/dsh-quick-send",
   "version": "0.1.0",
   "description": "常用语快捷发送：输入框上方的常用语面板，一键填入草稿（不覆盖、不自动发送）。与 ZCode quick-send 共享同一份 phrases.json 内容源，pinned/order 各侧本地。",
   "type": "module",
   "license": "MIT",
+  "author": "wenliang9527",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wenliang9527/quick-send.git",
+    "directory": "plugins/dsh-quick-send"
+  },
+  "homepage": "https://github.com/wenliang9527/quick-send/tree/master/plugins/dsh-quick-send#readme",
+  "bugs": {
+    "url": "https://github.com/wenliang9527/quick-send/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "dsh",
     "dsh-plugin",

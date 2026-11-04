@@ -10,7 +10,7 @@
 // {{workspace}}/{{clipboard}}/未知占位符原样保留，与 ZCode 侧一致。
 
 window.__ModuleLoader__.load({
-  id: 'dsh-quick-send',
+  id: '@wenliang9527/dsh-quick-send',
   factory: function (require) {
     var module = { exports: {} }
     var exports = module.exports

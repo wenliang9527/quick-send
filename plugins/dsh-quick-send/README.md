@@ -74,7 +74,7 @@ DSH 常用语快捷发送插件 —— 输入框旁的常用语浮层面板，**
 
 ## 占位符支持矩阵
 
-| 占位符 | dsh-quick-send | ZCode quick-send |
+| 占位符 | @wenliang9527/dsh-quick-send | ZCode quick-send |
 |---|---|---|
 | `{{date}}` / `{{time}}` / `{{datetime}}` | ✅ 插入时展开 | ✅ |
 | `{{workspace}}` | ⏸ 原样保留（首版） | ✅ 各侧各义 |
@@ -96,7 +96,7 @@ DSH 常用语快捷发送插件 —— 输入框旁的常用语浮层面板，**
 ```yaml
 - insert:
     - id: quick-send
-      name: 'dsh-quick-send'
+      name: '@wenliang9527/dsh-quick-send'
       config:
         panelSlot: 'dock'
 ```
@@ -107,6 +107,13 @@ DSH 常用语快捷发送插件 —— 输入框旁的常用语浮层面板，**
 ## 安装
 
 ```bash
+# 从 npm（推荐）
+dsh plugin --profile desktop add @wenliang9527/dsh-quick-send
+
+# 从 GitHub 子目录
+dsh plugin --profile desktop add github:wenliang9527/quick-send#plugins/dsh-quick-send
+
+# 本地目录（开发时）
 dsh plugin --profile desktop add link:D:/WORK_VSCODE/Vibe-coding/quick-send/plugins/dsh-quick-send
 ```
 
@@ -124,13 +131,13 @@ node <dsh>/resources/runtime/primary-runtime/dependencies/pnpm/bin/pnpm.cjs add 
   --dir "C:\Users\<you>\.dsh\profiles\desktop"
 ```
 
-然后手动把 `"dsh-quick-send"` 加进 `~/.dsh/profiles/desktop/package.json` 的
+然后手动把 `"@wenliang9527/dsh-quick-send"` 加进 `~/.dsh/profiles/desktop/package.json` 的
 `dsh.profile.bundles` 数组（`plugin_manager` 自动安装失败时不会自动补这一步）。
 
 ## 卸载
 
 ```powershell
-node <dsh>/resources/runtime/primary-runtime/dependencies/pnpm/bin/pnpm.cjs remove dsh-quick-send `
+node <dsh>/resources/runtime/primary-runtime/dependencies/pnpm/bin/pnpm.cjs remove @wenliang9527/dsh-quick-send `
   --store-dir "C:\Users\<you>\.pnpm\store\v11" --dir "C:\Users\<you>\.dsh\profiles\desktop"
 ```
 
@@ -245,8 +252,8 @@ node <plugin-write-skill>/scripts/validate-names.mjs --manifest ./dsh-plugin.nam
 
 | 项 | 值 |
 |---|---|
-| packageName | `dsh-quick-send` |
-| pluginNames | `dsh-quick-send` |
+| packageName | `@wenliang9527/dsh-quick-send` |
+| pluginNames | `@wenliang9527/dsh-quick-send` |
 | loaderIds | `quick-send` |
 | routes | 6 个 `/__quick-send/*` exact 路由 |
 
@@ -255,7 +262,7 @@ node <plugin-write-skill>/scripts/validate-names.mjs --manifest ./dsh-plugin.nam
 ### 打包产物验证
 
 ```bash
-npm pack                 # 生成 dsh-quick-send-0.1.0.tgz
+npm pack                 # 生成 wenliang9527-dsh-quick-send-0.1.0.tgz
 npm pack --dry-run       # 只看内容不生成
 ```
 

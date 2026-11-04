@@ -23,7 +23,7 @@ import {
   nowIso,
 } from './store.js'
 
-const name = 'dsh-quick-send'
+const name = '@wenliang9527/dsh-quick-send'
 const inject = []
 
 const MAX_TITLE = 120

@@ -76,7 +76,7 @@ function loadClient() {
 
   // eslint-disable-next-line no-eval
   ;(0, eval)(src)
-  const mod = modules['dsh-quick-send']
+  const mod = modules['@wenliang9527/dsh-quick-send']
 
   const registered = {}
   const ctx = {
@@ -445,7 +445,7 @@ test('i18n：注册中英双语字典，且两语言键集一致', () => {
       }
     },
   }
-  modules['dsh-quick-send'].apply(ctx, {})
+  modules['@wenliang9527/dsh-quick-send'].apply(ctx, {})
 
   assert.ok(registered, '应向 locale 注册字典')
   assert.equal(registered.ns, 'quick-send')
