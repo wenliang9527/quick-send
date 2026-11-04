@@ -4,7 +4,8 @@
 [![license](https://img.shields.io/npm/l/@wenliang9527/dsh-quick-send.svg)](https://github.com/wenliang9527/quick-send/blob/master/LICENSE)
 [![tests](https://img.shields.io/badge/tests-112%20passed-brightgreen.svg)](#测试)
 
-DSH 常用语快捷发送插件 —— 输入框旁的常用语浮层面板，**点一下插到光标处**（不覆盖、不自动发送）。
+DSH 常用语快捷发送插件 —— **浮层一键插到光标处**（不覆盖、不自动发送），
+**侧边栏管理页**负责增删改、排序与导入导出。两个界面各管一件事。
 
 装完即用，数据默认存在 `~/.dsh/quick-send/phrases.json`，**不需要建任何文件夹**。
 若想与 ZCode 的 `quick-send` 插件共用同一份常用语，配置一下 `phrasesFile` 指向同一个文件即可
@@ -484,6 +485,21 @@ src/client.js  src/expand.js  src/index.js  src/store.js
 - **浮层不含编辑**：浮层只负责插入，新建/改写请走管理页（侧边栏 📚 或浮层上的「管理」按钮）。
 
 ## 变更记录
+
+### 0.3.1 —— 文案对齐（代码零改动）
+
+0.3.0 改了两个界面的结构，但有 3 处说明文字还在讲旧的单面板形态，容易被误导。
+本版**只改文案，不动一行逻辑**，测试仍为 112 项全过。
+
+- `package.json` 的 `description`：从「输入框**上方**的常用语**面板**，一键填入草稿」
+  改为「**浮层**一键插到光标处，**侧边栏管理页**负责增删改与排序」。
+  这一处会显示在 **npm 搜索页和插件市场**里，影响陌生人的第一印象。
+- 插件 `README.md` 首段：同步为「浮层插入 + 侧边栏管理页维护」。
+- `src/client.js` 顶部槽位注释：补齐 `sidebar.panellist` + `main` 两个槽位，
+  并写明 **`id` 必须等于 `key`**（缺一处就会「点侧边栏图标毫无反应」）。
+
+> 如果你是从 0.3.0 升级：**功能完全一致，只是说明文字更准确**。
+> 已经装好并用着 0.3.0 的话，可以不升。
 
 ### 0.3.0 —— 浮层瘦身 + 侧边栏管理页
 

@@ -1,10 +1,18 @@
 // dsh-quick-send · Client 半区（ModuleLoader bundle）
 //
-//  - conversation.input.left    -> 📚 触发按钮（输入框工具行）
-//  - conversation.input.overlay -> 浮层面板（渲染在 composer 卡片内，不挤压输入框）
+// 两个界面，各管一件事（v0.3.0 起）：
+//   conversation.input.left     -> 📚 触发按钮（输入框工具行）
+//   conversation.input.overlay  -> 浮层：只负责插入（序号+标题一行，1-9 直插）
+//   sidebar.panellist           -> 📚 侧边栏图标（id 必须等于下面的 main key）
+//   main (keyed, key=quick-send)-> 管理页：只负责维护（CRUD/搜索/分类/置顶/排序/导入导出）
+//
+// 浮层与管理页复用同一组件，靠 props.__mode 切换；Hook 数量必须完全一致
+// （client.test.mjs 有守门用例，改动顶部 Hook 结构会让它先炸）。
+//
 //  - 数据走 Host 半 HTTP 端点：/__quick-send/*
 //  - 插入草稿用 props.inputActions.insertText（插到光标处，一次可撤销编辑）
 //    配合 captureInsertion + 两档重试，失败时给出四种明确原因
+//  - 返回对话用 ctx.get('layout').selectPanel(null)（契约里 null 即显示 Conversation）
 //
 // 占位符在「插入时」展开（{{date}}/{{time}}/{{datetime}}），
 // {{workspace}}/{{clipboard}}/未知占位符原样保留，与 ZCode 侧一致。
