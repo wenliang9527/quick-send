@@ -27,7 +27,7 @@ ZCode 会话侧栏「快捷发送」面板：常用语管理，一键复制到�
 - 界面跟随宿主语言（zh/en）与主题；搜索词/分类 chips 会话内记忆
 - 会话内快捷打开：斜杠命令 **`/quick-send`**（直接出面板卡片；带标题关键词则直接展开该条，如 `/quick-send 复位日志`）；插件卡片「打开」按钮直达侧栏
 - **agent 代加常用语**：`/quick-send-organize` 整理当前对话/指定主题 → 查重 → 草稿经你确认 → `bulk_add_snippets` 一次入库（agent 也可直接调工具）
-- 数据分层（CONTRACT.md）：**内容** = 共享 `phrases.json`（默认 `D:\WORK_VSCODE\Vibe-coding\shared-phrases\`，插件设置可改路径），DSH/ZCode 双向写，原子替换+损坏自愈+schemaVersion 守卫；**视图**（置顶/排序）= 本地 `view.json`
+- 数据分层（[CONTRACT.md](docs/shared-phrases/CONTRACT.md)）：**内容** = 共享 `phrases.json`（默认 `D:\WORK_VSCODE\Vibe-coding\shared-phrases\`，插件设置可改路径），DSH/ZCode 双向写，原子替换+损坏自愈+schemaVersion 守卫；**视图**（置顶/排序）= 本地 `view.json`
 - 上限与 DSH 对齐：标题 120 / 正文 20000 / 分类 20 **字符**（DSH 超限截断、本侧超限拒绝，共同上界一致）；条数护栏 2000（契约无上限，超出仅拒新增）；占位符 `{{datetime}}` 带秒（契约），`{{clipboard}}` 仅 ZCode 侧
 
 ## 资源占用（实测）

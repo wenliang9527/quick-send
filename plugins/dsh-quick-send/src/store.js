@@ -1,6 +1,6 @@
 // dsh-quick-send · 共享存储层
 //
-// 纪律（见 shared-phrases/docs/CONTRACT.md）：
+// 纪律（见仓库 docs/shared-phrases/CONTRACT.md）：
 //   全量读改写 + 临时文件原子替换 + 损坏 .bad 留证后空表启动
 //
 // 内容层 phrases.json（共享，双向写）

@@ -477,7 +477,7 @@ jitless 无效),SDK 仅 ~13MB,业务代码近乎免费 → **在 Node 内无优�
 ## 15. 共享架构(v0.5.0,2026-11-04)
 
 与 DSH 侧 `dsh-quick-send` 共用常用语,契约见
-`D:\WORK_VSCODE\Vibe-coding\shared-phrases\docs\CONTRACT.md`(双方定稿)。
+[`docs/shared-phrases/CONTRACT.md`](shared-phrases/CONTRACT.md)(双方定稿)。
 
 - **分层**:内容(title/text/category/时间戳)= 共享 `phrases.json`,严格六字段+schemaVersion;
   视图(pinned/order)= 各侧本地 view.json(ZCode 侧在 ${ZCODE_PLUGIN_DATA})

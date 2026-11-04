@@ -1,6 +1,6 @@
 // dsh-quick-send · 占位符展开
 //
-// 契约（shared-phrases/docs/CONTRACT.md）：
+// 契约（仓库 docs/shared-phrases/CONTRACT.md）：
 //   {{date}} {{time}} {{datetime}}  —— 本侧实现
 //   {{workspace}}                   —— 首版原样保留（当未知占位符）
 //   {{clipboard}}                   —— 不支持，原样保留

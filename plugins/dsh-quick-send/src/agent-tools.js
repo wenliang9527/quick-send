@@ -6,7 +6,7 @@
 //   quick_send_update  修改一条，**仅按 id 定位**
 //   quick_send_delete  删除一条，**仅按 id + 必须 confirm:true**
 //
-// 设计纪律（见 shared-phrases/docs/CONTRACT.md）：
+// 设计纪律（见仓库 docs/shared-phrases/CONTRACT.md）：
 //   1. update/delete 只认 id，不认标题 —— 标题可能重复，按标题定位会误改/误删
 //   2. 与面板共用同一套 store 逻辑，遵守「全量读改写 + 原子替换」
 //   3. 不写 source 字段，保持六字段契约；agent 新建的用 dsh-agent- 前缀 id 便于识别

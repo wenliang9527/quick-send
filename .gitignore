@@ -8,3 +8,10 @@ plugins/quick-send/panel/server-rs/target/
 *.tgz
 plugins/*/.plugin-manager/
 
+# 常用语运行期数据：用户在插件里写的内容，可能含隐私，不应进仓库。
+# 数据文件位置由两侧各自配置（见 docs/shared-phrases/CONTRACT.md），
+# 本仓库只跟踪契约文档，不跟踪数据本体。
+phrases.json
+view.json
+*.json.bad
+*.json.tmp

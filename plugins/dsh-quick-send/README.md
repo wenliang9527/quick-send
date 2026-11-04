@@ -216,7 +216,8 @@ dsh plugin --profile desktop add @wenliang9527/dsh-quick-send
 - 一方新增/修改后，另一方**重新打开面板即可看到**（每次打开都重新拉取）
 - **`body` 必须叫 `text`**：ZCode 侧若保留旧字段名，DSH 读到的正文会是空的
 
-完整契约见 [`shared-phrases/docs/CONTRACT.md`](../../../../shared-phrases/docs/CONTRACT.md)。
+完整契约见 [`docs/shared-phrases/CONTRACT.md`](https://github.com/wenliang9527/quick-send/blob/master/docs/shared-phrases/CONTRACT.md)。
+ZCode 侧对接细节见 [`HANDOFF-DSH.md`](https://github.com/wenliang9527/quick-send/blob/master/docs/shared-phrases/HANDOFF-DSH.md)。
 
 ## 占位符支持矩阵
 
