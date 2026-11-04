@@ -156,6 +156,15 @@ ZCode 侧现有 `${ZCODE_PLUGIN_DATA}/snippets.json`
 
 ## ZCode 待办（DSH 侧已修，等 ZCode 跟进）
 
+> **2026-11-04 更新（ZCode 侧回填）：三条全部了结**——
+> ① 已修：`phrases_path()` 默认值改 `data_dir().join("phrases.json")`（v0.5.6,提交见 quick-send 仓 git log）,
+>    回归单测 `default_phrases_path_follows_user_data_dir`（未配置→数据目录内且不含 WORK_VSCODE /
+>    配置→按环境变量 / 视图路径同理）;
+> ② 已做 README「两种装法」（装法 A 只自己用默认零操作 / 装法 B 共享须显式配置 phrasesPath）;
+>    「面板内显示当前 phrases.json 路径」未做,登记 design.md §13 观察项;
+> ③ 已完成:v0.5.5 实现 `bulk_add_snippets` + `/quick-send-organize`(ZCode 侧取"一个批量工具+命令固化纪律"路线,
+>    未做逐条 add/update/delete 四工具;跨端内容层经共享文件已互通)。
+
 ### 1. 必修：默认路径写死作者机器路径
 
 **位置**：`plugins/quick-send/panel/server-rs/src/store.rs` 第 116 行

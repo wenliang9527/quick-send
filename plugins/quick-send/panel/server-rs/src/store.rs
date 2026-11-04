@@ -109,11 +109,13 @@ fn data_dir() -> PathBuf {
     }
 }
 
-/// 共享内容源路径:env QUICK_SEND_PHRASES（plugin.json userConfig 注入,替换失败特征含 "${"）
+/// 共享内容源路径:env QUICK_SEND_PHRASES（plugin.json userConfig 注入,替换失败特征含 "${"）。
+/// 默认跟随用户数据目录（CONTRACT 待办1,对齐 DSH 0.2.2 修法）:不配置 = 自包含可用,
+/// 不得把作者机器路径当默认值;要共享 = 显式配置 phrasesPath。
 fn phrases_path() -> PathBuf {
     match std::env::var("QUICK_SEND_PHRASES") {
         Ok(v) if !v.is_empty() && !v.contains("${") => PathBuf::from(v),
-        _ => PathBuf::from(r"D:\WORK_VSCODE\Vibe-coding\shared-phrases\phrases.json"),
+        _ => data_dir().join("phrases.json"),
     }
 }
 
@@ -788,6 +790,30 @@ mod tests {
         assert_eq!(r["added"], 0);
         assert_eq!(r["failed"].as_array().unwrap().len(), 2);
         assert_eq!(list_snippets().len(), MAX_SNIPPETS);
+    }
+
+    #[test]
+    fn default_phrases_path_follows_user_data_dir() {
+        // CONTRACT 待办1:默认路径不得写死作者机器目录——未配置时跟随用户数据目录
+        // (不含 WORK_VSCODE),配置了 QUICK_SEND_PHRASES 则按环境变量;视图路径同理相对用户目录
+        let _g = TEST_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("qs-rs-test-{}", new_id()));
+        fs::create_dir_all(&dir).unwrap();
+        let prev = std::env::var("QUICK_SEND_PHRASES").ok();
+        std::env::set_var("QUICK_SEND_DATA", &dir);
+        std::env::remove_var("QUICK_SEND_PHRASES");
+        let p = phrases_path();
+        assert_eq!(p, dir.join("phrases.json"));
+        assert!(!p.to_string_lossy().contains("WORK_VSCODE"), "默认路径不得含作者机器目录");
+        assert_eq!(view_path(), dir.join("view.json"));
+        let custom = dir.join("custom").join("phrases.json");
+        std::env::set_var("QUICK_SEND_PHRASES", &custom);
+        assert_eq!(phrases_path(), custom);
+        match prev {
+            Some(v) => std::env::set_var("QUICK_SEND_PHRASES", v),
+            None => std::env::remove_var("QUICK_SEND_PHRASES"),
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
