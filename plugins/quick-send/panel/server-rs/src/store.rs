@@ -9,7 +9,7 @@
 //! schemaVersion 不认识 → 读空表 + **拒绝写入**。
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -318,6 +318,26 @@ pub fn get_snippet(id: &str) -> Option<Snippet> {
     list_snippets().into_iter().find(|s| s.id == id)
 }
 
+/// 单条校验（save 与 bulk 共用同一口径）
+fn validate_phrase(title: &str, text: &str, category: &str) -> Result<(), String> {
+    if title.is_empty() {
+        return Err("标题不能为空".into());
+    }
+    if text.trim().is_empty() {
+        return Err("内容不能为空".into());
+    }
+    if title.chars().count() > MAX_TITLE {
+        return Err(format!("标题超限（{}/{} 字）", title.chars().count(), MAX_TITLE));
+    }
+    if text.chars().count() > MAX_TEXT {
+        return Err(format!("内容超限（{}/{} 字）", text.chars().count(), MAX_TEXT));
+    }
+    if category.chars().count() > MAX_CATEGORY {
+        return Err(format!("分类超限（{}/{} 字）", category.chars().count(), MAX_CATEGORY));
+    }
+    Ok(())
+}
+
 pub fn save_snippet(input: &Value) -> Result<Vec<Snippet>, StoreError> {
     let mut shared = shared_or_err()?;
     let obj = input.as_object().ok_or(("validation", "参数必须是对象".into()))?;
@@ -328,21 +348,7 @@ pub fn save_snippet(input: &Value) -> Result<Vec<Snippet>, StoreError> {
     let pinned = obj.get("pinned").and_then(Value::as_bool).unwrap_or(false);
     let id = obj.get("id").and_then(Value::as_str).unwrap_or("");
 
-    if title.is_empty() {
-        return Err(("validation", "标题不能为空".into()));
-    }
-    if text.trim().is_empty() {
-        return Err(("validation", "内容不能为空".into()));
-    }
-    if title.chars().count() > MAX_TITLE {
-        return Err(("validation", format!("标题超限（{}/{} 字）", title.chars().count(), MAX_TITLE)));
-    }
-    if text.chars().count() > MAX_TEXT {
-        return Err(("validation", format!("内容超限（{}/{} 字）", text.chars().count(), MAX_TEXT)));
-    }
-    if category.chars().count() > MAX_CATEGORY {
-        return Err(("validation", format!("分类超限（{}/{} 字）", category.chars().count(), MAX_CATEGORY)));
-    }
+    validate_phrase(&title, &text, &category).map_err(|e| ("validation", e))?;
 
     let now = now_iso();
     let mut view = load_view();
@@ -380,6 +386,61 @@ pub fn save_snippet(input: &Value) -> Result<Vec<Snippet>, StoreError> {
     save_shared(&shared).map_err(|e| ("validation", e))?;
     save_view(&view);
     Ok(synth(&shared.phrases, &view))
+}
+
+/// 批量新增（agent 整理场景）：逐条校验（与 save 同口径）、与现有条目完全重复的跳过、
+/// **整批一次原子写**（不是 N 次读改写）。任一条失败不影响其他条。
+/// 返回 {added, skippedDuplicates, failed:[{index,title,error}], snippets:更新后全量}。
+pub fn bulk_add_snippets(input: &Value) -> Result<Value, StoreError> {
+    let items = input
+        .get("phrases")
+        .and_then(Value::as_array)
+        .ok_or(("validation", "phrases 必须是数组".to_string()))?;
+    let mut shared = shared_or_err()?;
+    let view = load_view();
+    let mut added = 0usize;
+    let mut skipped = 0usize;
+    let mut failed: Vec<Value> = Vec::new();
+    for (idx, item) in items.iter().enumerate() {
+        let Some(obj) = item.as_object() else {
+            failed.push(json!({ "index": idx, "error": "条目必须是对象" }));
+            continue;
+        };
+        let title = obj.get("title").and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let text = obj.get("body").and_then(Value::as_str).unwrap_or("").to_string();
+        let category = obj.get("category").and_then(Value::as_str).unwrap_or("").trim().to_string();
+        if let Err(e) = validate_phrase(&title, &text, &category) {
+            failed.push(json!({ "index": idx, "title": title, "error": e }));
+            continue;
+        }
+        if shared.phrases.iter().any(|p| p.title == title && p.text == text && p.category == category) {
+            skipped += 1; // 完全重复：跳过不报错
+            continue;
+        }
+        if shared.phrases.len() >= MAX_SNIPPETS {
+            failed.push(json!({ "index": idx, "title": title, "error": format!("已达上限（{} 条）", MAX_SNIPPETS) }));
+            continue;
+        }
+        let now = now_iso();
+        shared.phrases.push(Phrase {
+            id: new_id(),
+            title,
+            text,
+            category,
+            createdAt: now.clone(),
+            updatedAt: now,
+        });
+        added += 1;
+    }
+    if added > 0 {
+        save_shared(&shared).map_err(|e| ("validation", e))?;
+    }
+    Ok(json!({
+        "added": added,
+        "skippedDuplicates": skipped,
+        "failed": failed,
+        "snippets": serde_json::to_value(synth(&shared.phrases, &view)).unwrap_or(Value::Null),
+    }))
 }
 
 pub fn delete_snippet(id: &str) -> Result<Vec<Snippet>, StoreError> {
@@ -685,6 +746,44 @@ mod tests {
         assert!(save_snippet(&json!({"title":"t","body":"字".repeat(20000)})).is_ok());
         assert!(save_snippet(&json!({"title":"t","body":"字".repeat(20001)})).is_err());
         assert!(save_snippet(&json!({"title":"t","body":"b","category":"x".repeat(21)})).is_err());
+    }
+
+    #[test]
+    fn bulk_add_mixed_results() {
+        let (_g, dir) = isolated();
+        save_snippet(&json!({"title":"dupT","body":"dupB","category":"X"})).unwrap();
+        let r = bulk_add_snippets(&json!({ "phrases": [
+            { "title": "dupT", "body": "dupB", "category": "X" }, // 完全重复 → 跳过
+            { "title": "b1", "body": "内容一" },                   // 成功
+            { "title": "", "body": "x" },                          // 校验失败
+            { "title": "b2", "body": "内容二", "category": "Y" }   // 成功
+        ]})).unwrap();
+        assert_eq!(r["added"], 2);
+        assert_eq!(r["skippedDuplicates"], 1);
+        assert_eq!(r["failed"].as_array().unwrap().len(), 1);
+        assert_eq!(r["failed"][0]["index"], 2);
+        let list = list_snippets();
+        assert_eq!(list.len(), 3); // 原 1 + 新 2
+        assert!(list.iter().any(|s| s.title == "b2" && s.category == "Y"));
+    }
+
+    #[test]
+    fn bulk_add_respects_limit() {
+        // 满额时整批全部拒绝，且一次都不落盘
+        let (_g, dir) = isolated();
+        let path = shared_path(&dir);
+        let bulk = json!({ "schemaVersion": 1, "phrases": (0..MAX_SNIPPETS).map(|i| json!({
+            "id": format!("f{i}"), "title": format!("t{i}"), "text": "b", "category": "",
+            "createdAt": "2026-11-04T00:00:00.000Z", "updatedAt": "2026-11-04T00:00:00.000Z"
+        })).collect::<Vec<_>>() });
+        fs::write(&path, serde_json::to_string(&bulk).unwrap()).unwrap();
+        let r = bulk_add_snippets(&json!({ "phrases": [
+            { "title": "n1", "body": "b" },
+            { "title": "n2", "body": "b" }
+        ]})).unwrap();
+        assert_eq!(r["added"], 0);
+        assert_eq!(r["failed"].as_array().unwrap().len(), 2);
+        assert_eq!(list_snippets().len(), MAX_SNIPPETS);
     }
 
     #[test]

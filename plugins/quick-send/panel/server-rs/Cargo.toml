@@ -1,6 +1,6 @@
 [package]
 name = "quick-send-server"
-version = "0.5.4"
+version = "0.5.5"
 edition = "2021"
 description = "Quick-Send MCP App 后端（Rust 原生版）：stdio JSON-RPC + snippets 存储 + 剪贴板"
 

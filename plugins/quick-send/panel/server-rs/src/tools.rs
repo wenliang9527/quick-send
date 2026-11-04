@@ -7,7 +7,7 @@ use serde_json::{json, Map, Value};
 
 pub const RESOURCE_URI: &str = "ui://quick-send/panel.html";
 pub const SURFACE_ID: &str = "quick-send";
-pub const VERSION: &str = "0.5.4";
+pub const VERSION: &str = "0.5.5";
 const PREVIEW_CHARS: usize = 80;
 
 fn schema_empty() -> Value {
@@ -112,6 +112,31 @@ pub fn tools_list() -> Value {
             "_meta": meta_app()
         }),
         json!({
+            "name": "bulk_add_snippets",
+            "title": "批量新增常用语",
+            "description": "批量新增常用语（agent 整理场景，一次调用写多条）。流程纪律：先 list_snippets 查重 → 拟草稿并经用户确认 → 再调用本工具。phrases 每项 {title(必填), body(必填,可直接整句发送), category(可选)}；逐条校验（非空、上限 120/20000/20 字符、总量护栏 2000），与现有条目完全重复的自动跳过；整批一次原子写入，返回 added/skippedDuplicates/failed 与更新后全量列表。",
+            "inputSchema": {
+                "type": "object",
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "properties": {
+                    "phrases": {
+                        "type": "array",
+                        "description": "待新增的常用语数组",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": { "type": "string", "description": "标题（动宾短语，≤120 字）" },
+                                "body": { "type": "string", "description": "正文（可直接发送的完整指令；可用 {{date}}/{{time}}/{{datetime}}/{{workspace}} 占位符，{{clipboard}} 仅 ZCode 侧展开）" },
+                                "category": { "type": "string", "description": "分类（可选，≤20 字，优先归入现有分类）" }
+                            },
+                            "required": ["title", "body"]
+                        }
+                    }
+                },
+                "required": ["phrases"]
+            }
+        }),
+        json!({
             "name": "copy_snippet",
             "title": "copy_snippet",
             "description": "[面板专用] 展开常用语占位符并写入系统剪贴板",
@@ -159,6 +184,11 @@ fn call_impl(name: &str, params: &Value) -> Result<(String, bool), (String, Stri
             let snippet = obj.get("snippet").cloned().unwrap_or(Value::Null);
             store::save_snippet(&snippet)
                 .map(|list| (serde_json::to_string(&json!({ "snippets": snippets_value(&list) })).unwrap(), false))
+                .map_err(|(code, msg)| (code.to_string(), msg))
+        }
+        "bulk_add_snippets" => {
+            store::bulk_add_snippets(&Value::Object(obj))
+                .map(|report| (serde_json::to_string(&report).unwrap(), false))
                 .map_err(|(code, msg)| (code.to_string(), msg))
         }
         "delete_snippet" => {

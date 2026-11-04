@@ -168,6 +168,21 @@ try {
   r = await call("list_snippets");
   check("清理后为空", r.data.snippets.length === 0);
 
+  // ── 批量新增（agent 整理路径,v0.5.5） ──
+  await call("save_snippet", { snippet: { title: "dupT", body: "dupB", category: "X" } });
+  r = await call("bulk_add_snippets", { phrases: [
+    { title: "dupT", body: "dupB", category: "X" }, // 完全重复 → 跳过
+    { title: "b1", body: "内容一" },                 // 成功
+    { title: "", body: "x" },                        // 校验失败
+    { title: "b2", body: "内容二", category: "Y" },  // 成功
+  ] });
+  check("bulk 混合:added=2/skip=1/fail=1", !r.isError && r.data.added === 2 && r.data.skippedDuplicates === 1 && r.data.failed.length === 1);
+  check("bulk 整批入库(列表含 b1/b2)", r.data.snippets.some((s) => s.title === "b1") && r.data.snippets.some((s) => s.title === "b2"));
+  for (const t of ["dupT", "b1", "b2"]) {
+    const id = r.data.snippets.find((s) => s.title === t)?.id;
+    if (id) await call("delete_snippet", { id });
+  }
+
   // ── 条数护栏（放最后：占满存储;v0.5.1 起 2000,直接预置文件避免逐条慢存） ──
   const bulk = {
     schemaVersion: 1,
