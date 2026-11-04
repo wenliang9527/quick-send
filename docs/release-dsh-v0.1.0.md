@@ -2,6 +2,9 @@
 
 DSH 常用语快捷发送插件的首个版本。与同仓库的 ZCode 版 `quick-send` 共享同一份 `phrases.json` 内容源。
 
+> **npm 包名**：`@wenliang9527/dsh-quick-send`
+> （`dsh-quick-send` 在 npm 已被他人占用，故使用带 scope 的名字）
+
 ### 核心能力
 
 - **📚 浮层面板**：输入框工具行按钮展开，渲染在 composer 卡片内，不挤压布局
@@ -14,16 +17,12 @@ DSH 常用语快捷发送插件的首个版本。与同仓库的 ZCode 版 `quic
 
 ### 安装
 
-通过 GitHub 直装（指定子目录）：
-
 ```bash
+# 从 npm
+dsh plugin --profile desktop add @wenliang9527/dsh-quick-send
+
+# 从 GitHub 子目录
 dsh plugin --profile desktop add github:wenliang9527/quick-send#plugins/dsh-quick-send
-```
-
-或本地目录安装：
-
-```bash
-dsh plugin --profile desktop add link:<path>/quick-send/plugins/dsh-quick-send
 ```
 
 装完**重启 DSH**，然后 `Ctrl+R` 刷新界面。
