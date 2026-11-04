@@ -3,9 +3,12 @@
 # 插入一行，同时挂上「宿主半区 src/index.js」与「浏览器半区 src/client.js」。
 # 两个半区同属一个包，由 package.json 的 dsh.bundle / dsh.client 声明。
 #
-# config 可覆盖数据文件位置（不写则用内置默认值）：
+# config 可覆盖数据文件位置与面板位置（不写则用内置默认值）：
 #   phrasesFile: 共享内容文件（默认 D:\WORK_VSCODE\Vibe-coding\shared-phrases\phrases.json）
 #   viewFile:    本侧视图文件（默认 ~/.dsh/quick-send/view.json）
+#   panelSlot:   面板容器，'overlay'（默认，浮层不挤压输入框）| 'dock'（固定整行，不遮挡但顶高输入区）
+#
+# 注：panelSlot 由 Host 半区经 /__quick-send/paths 告知 Client 半区，改完需重启 DSH。
 
 - insert:
     - id: quick-send
@@ -13,3 +16,4 @@
       # config:
       #   phrasesFile: 'D:\WORK_VSCODE\Vibe-coding\shared-phrases\phrases.json'
       #   viewFile: 'C:\Users\<you>\.dsh\quick-send\view.json'
+      #   panelSlot: 'overlay'

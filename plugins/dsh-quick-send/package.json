@@ -16,6 +16,9 @@
     "node": ">=20"
   },
   "main": "src/index.js",
+  "scripts": {
+    "test": "node --test test/store.test.mjs test/client.test.mjs test/e2e.test.mjs"
+  },
   "exports": {
     ".": "./src/index.js",
     "./client": "./src/client.js",
@@ -24,6 +27,7 @@
   "files": [
     "src/",
     "cordis.patch.yml",
+    "dsh-plugin.naming.json",
     "README.md"
   ],
   "dsh": {

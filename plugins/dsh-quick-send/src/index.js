@@ -211,7 +211,12 @@ export function apply(ctx, config) {
       {
         path: '/__quick-send/paths',
         method: 'GET',
-        handler: route(async () => ({ phrasesFile, viewFile })),
+        handler: route(async () => ({
+          phrasesFile,
+          viewFile,
+          // 面板容器位置，供 Client 半区决定注册到哪个槽位
+          panelSlot: typeof cfg.panelSlot === 'string' && cfg.panelSlot === 'dock' ? 'dock' : 'overlay',
+        })),
       },
     ]
     for (const def of defs) {

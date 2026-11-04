@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "policy": "dsh-plugin-naming/v1",
+  "plugin": {
+    "namespace": "quicksend",
+    "name": "quick-send",
+    "coordinate": "quicksend/quick-send",
+    "packageName": "dsh-quick-send"
+  },
+  "names": {
+    "pluginNames": ["dsh-quick-send"],
+    "loaderIds": ["quick-send"],
+    "services": [],
+    "tools": [],
+    "commands": [],
+    "skills": [],
+    "skillProviders": [],
+    "events": [],
+    "settingsNamespaces": [],
+    "routes": [
+      { "kind": "exact", "path": "/__quick-send/list" },
+      { "kind": "exact", "path": "/__quick-send/save" },
+      { "kind": "exact", "path": "/__quick-send/delete" },
+      { "kind": "exact", "path": "/__quick-send/view" },
+      { "kind": "exact", "path": "/__quick-send/reorder" },
+      { "kind": "exact", "path": "/__quick-send/paths" }
+    ]
+  }
+}
