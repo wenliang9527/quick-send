@@ -73,6 +73,16 @@ window.__ModuleLoader__.load({
         dataFileLabel: '数据文件',
         dataFileTip: '点击复制完整路径',
         copied: '路径已复制',
+        quickHint: '点整条插入，或按 1-9',
+        manageBtn: '管理',
+        manageTitle: '常用语管理',
+        manageTip: '点侧边栏图标可随时打开此页',
+        sidebarLabel: '常用语',
+        sidebarTip: '常用语管理',
+        manageEmpty: '还没有常用语',
+        backBtn: '← 返回对话',
+        backTip: '返回对话界面',
+        backFail: '返回失败：{msg}',
       },
       en: {
         trigger: 'Phrases',
@@ -123,11 +133,27 @@ window.__ModuleLoader__.load({
         dataFileLabel: 'Data file',
         dataFileTip: 'Click to copy the full path',
         copied: 'Path copied',
+        quickHint: 'Click a row to insert, or press 1-9',
+        manageBtn: 'Manage',
+        manageTitle: 'Phrases manager',
+        manageTip: 'Open this page from the sidebar icon anytime',
+        sidebarLabel: 'Phrases',
+        sidebarTip: 'Phrases manager',
+        manageEmpty: 'No phrases yet',
+        backBtn: '← Back to chat',
+        backTip: 'Return to the conversation',
+        backFail: 'Cannot go back: {msg}',
       },
     }
 
     /** 模块级兜底翻译（未接入 locale 服务时用中文）。 */
     var boundT = null
+
+    /** 侧边栏面板 id：sidebar.panellist 与 main(keyed) 必须严格同值。 */
+    var PANEL_ID = 'quick-send'
+
+    /** 应用根 ctx，供组件内兜底取 layout 服务（不放进 Hook，避免数量抖动）。 */
+    var ctxGet = null
 
     function format(tpl, params) {
       if (!params) return tpl
@@ -211,6 +237,17 @@ window.__ModuleLoader__.load({
       '.qs-chip{flex:0 0 auto;border:1px solid var(--dsw-alias-border-l2);background:transparent;border-radius:999px;padding:2px 10px;font-size:11px;color:var(--dsw-alias-label-secondary);cursor:pointer;font-family:inherit;}',
       '.qs-chip.on{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:#fff;}',
       '.qs-list{display:flex;flex-direction:column;gap:6px;overflow-y:auto;min-height:0;flex:1 1 auto;}',
+      // 紧凑行（浮层用）：一行一条，序号 + 标题，点整行插入
+      '.qs-line{display:flex;align-items:center;gap:7px;border:1px solid transparent;border-radius:7px;padding:3px 7px;cursor:pointer;background:transparent;}',
+      '.qs-line:hover{border-color:var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);}',
+      '.qs-line.hi{border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-3,rgba(127,127,127,.08));}',
+      '.qs-line-title{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto;min-width:0;}',
+      '.qs-idx{flex:0 0 auto;min-width:15px;text-align:right;font-size:10px;font-family:ui-monospace,Consolas,monospace;color:var(--dsw-alias-label-secondary);opacity:.8;}',
+      '.qs-line.hi .qs-idx{color:var(--dsw-alias-brand-primary);opacity:1;}',
+      // 浮层紧凑模式：行距收到 2px，9 条一屏不用滚（.qs-compact 由渲染时挂到 .qs-panel 上）
+      '.qs-panel.qs-compact .qs-list{gap:2px;}',
+      '.qs-panel.qs-compact{max-height:min(52vh,420px);}',
+      '.qs-quick-hint{color:var(--dsw-alias-label-secondary);font-size:10px;opacity:.8;}',
       '.qs-item{border:1px solid var(--dsw-alias-border-l2);border-radius:9px;padding:6px 9px;cursor:pointer;background:var(--dsw-alias-bg-layer-2);}',
       '.qs-item:hover{border-color:var(--dsw-alias-brand-primary);}',
       '.qs-item.hi{border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-3,rgba(127,127,127,.08));}',
@@ -247,6 +284,15 @@ window.__ModuleLoader__.load({
       '.qs-foot-tag{flex:0 0 auto;}',
       '.qs-foot-path{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left;font-family:ui-monospace,Consolas,monospace;cursor:pointer;}',
       '.qs-foot-path:hover{color:var(--dsw-alias-label-primary);opacity:1;}',
+      // 管理页（中央面板）：整块可用，不受浮层高度限制
+      '.qs-page{display:flex;flex-direction:column;gap:10px;padding:16px 18px;width:100%;max-width:100%;min-width:0;overflow:hidden;height:100%;box-sizing:border-box;font-size:13px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2);}',
+      '.qs-page-head{display:flex;align-items:center;gap:10px;flex:0 0 auto;}',
+      '.qs-page-title{font-weight:600;font-size:15px;}',
+      '.qs-page .qs-list{flex:1 1 auto;min-height:0;}',
+      '.qs-page .qs-panel{max-height:none;}',
+      // 返回按钮：放在头部最左、做成「次要但显眼」，不要跟新建抢视觉重心
+      '.qs-back{margin-right:2px;}',
+      '.qs-back:hover{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);}',
     ].join('')
 
     // dock 模式覆盖：取消浮层定位，改为整行占位（不遮挡输入框，但会顶高输入区）
@@ -312,9 +358,17 @@ window.__ModuleLoader__.load({
     }
 
     // ---- 面板 ---------------------------------------------------------------
+    //
+    // 同一个组件服务两种形态（Hook 数量必须完全一致，否则 React 会崩）：
+    //   mode='quick'  —— 输入框浮层：只显序号+标题，点一下插入；编辑管理去「管理」页
+    //   mode='manage' —— 侧边栏中央面板：完整 CRUD / 搜索 / 分类 / 置顶 / 排序 / 导入导出
+    // 靠 props.__mode 切换，因此两种形态共用同一份 Hook 与状态，不重复实现。
 
     function Panel(props) {
+      var mode = props && props.__mode === 'manage' ? 'manage' : 'quick'
       var open = useOpen()
+      // 管理页常驻，不跟浮层开关走
+      var show = mode === 'manage' ? true : open
       // 取词函数：跟随 DSH 语言设置（放在 Hook 区之前，它本身不是 Hook）
       var t = translator(props)
 
@@ -383,16 +437,16 @@ window.__ModuleLoader__.load({
 
       React.useEffect(
         function () {
-          if (!open) return
+          if (!show) return
           refresh()
         },
-        [open],
+        [show],
       )
 
       // 面板底部显示当前数据文件位置：只取一次，失败就静默隐藏（纯提示，不影响主流程）
       React.useEffect(
         function () {
-          if (!open || dataPaths) return
+          if (!show || dataPaths) return
           requestJson('/__quick-send/paths')
             .then(function (info) {
               if (info && typeof info.phrasesFile === 'string') setDataPaths(info)
@@ -401,13 +455,14 @@ window.__ModuleLoader__.load({
               /* ignore */
             })
         },
-        [open, dataPaths],
+        [show, dataPaths],
       )
 
       // Esc 收起面板：编辑表单打开时不响应，避免误关正在编的内容
+      // 管理页常驻，不绑 Esc（那是整块主面板，关掉会让人以为插件坏了）
       React.useEffect(
         function () {
-          if (!open) return
+          if (!open || mode === 'manage') return
           function onKey(e) {
             if (e.key !== 'Escape') return
             if (editing) return
@@ -418,14 +473,17 @@ window.__ModuleLoader__.load({
             document.removeEventListener('keydown', onKey)
           }
         },
-        [open, editing],
+        [open, editing, mode],
       )
 
       /** 关闭面板：正编着内容且有实际改动时先确认，避免误关丢改动。 */
       function closePanel() {
         var dirty =
           editing &&
-          (editing.text.trim() !== '' || editing.title.trim() !== '' || editing.category.trim() !== '')
+          editing !== 'new' &&
+          (String(editing.text || '').trim() !== '' ||
+            String(editing.title || '').trim() !== '' ||
+            String(editing.category || '').trim() !== '')
         if (dirty) {
           if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
             if (!window.confirm(t('confirmDiscard'))) return
@@ -499,7 +557,8 @@ window.__ModuleLoader__.load({
           for (var attempt = 0; attempt < 2; attempt++) {
             var span = typeof inputActions.captureInsertion === 'function' ? inputActions.captureInsertion() : undefined
             if (inputActions.insertText(text, span) === true) {
-              setOpen(false)
+              // 只有浮层才需要收起；管理页常驻，插完继续留着方便连插
+              if (mode !== 'manage') setOpen(false)
               return
             }
           }
@@ -511,6 +570,35 @@ window.__ModuleLoader__.load({
 
       function togglePin(item) {
         apiPost('view', { id: item.id, pinned: !item.pinned }).then(applySnap).catch(fail)
+      }
+
+      /**
+       * 返回对话：selectPanel(null) 即「显示 Conversation」（见 layout 服务契约）。
+       * 编辑器有未保存内容时先确认，避免切走丢改动。
+       */
+      function backToChat() {
+        var dirty =
+          editing &&
+          editing !== 'new' &&
+          (String(editing.text || '').trim() !== '' ||
+            String(editing.title || '').trim() !== '' ||
+            String(editing.category || '').trim() !== '')
+        if (dirty) {
+          if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+            if (!window.confirm(t('confirmDiscard'))) return
+          }
+        }
+        setEditing(null)
+        var layout = typeof ctxGet === 'function' ? ctxGet('layout') : undefined
+        if (layout && typeof layout.selectPanel === 'function') {
+          try {
+            layout.selectPanel(null)
+          } catch (e) {
+            say('err', t('backFail', { msg: String(e && e.message ? e.message : e) }))
+          }
+        } else {
+          say('err', t('backFail', { msg: 'layout 服务不可用' }))
+        }
       }
 
       function move(item, direction) {
@@ -637,7 +725,7 @@ window.__ModuleLoader__.load({
           .catch(fail)
       }
 
-      if (!open) return null
+      if (!show) return null
 
       // ---- 过滤 ----
       var list = snap.phrases
@@ -693,6 +781,17 @@ window.__ModuleLoader__.load({
           e.preventDefault()
           e.stopPropagation()
           setHighlighted(null)
+          return
+        }
+        // 数字键 1-9 直接插入第 N 条：仅在搜索框为空时生效，
+        // 否则用户想搜「123」会被抢走按键。第 10 条起不绑（两位数歧义且记不住）。
+        if (/^[1-9]$/.test(e.key || '')) {
+          if (query.trim() !== '') return
+          if (e.altKey || e.ctrlKey || e.metaKey) return
+          var n = Number(e.key)
+          if (n > list.length) return
+          e.preventDefault()
+          insert(list[n - 1].text)
         }
       }
 
@@ -717,39 +816,61 @@ window.__ModuleLoader__.load({
         },
       })
 
-      var head = h(
-        'div',
-        { className: 'qs-head' },
-        h('span', { className: 'qs-title' }, t('panelTitle')),
+      // 头部按钮：浮层只留「管理」入口（编辑搬到管理页，浮层要轻）；
+      // 管理页给完整操作（导出/导入/新建），不需要「管理」和「关闭」。
+      var headButtons =
+        mode === 'quick'
+          ? [
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'qs-btn',
+                  title: t('manageTip'),
+                  onClick: function () {
+                    setOpen(false)
+                    var layout = typeof ctxGet === 'function' ? ctxGet('layout') : undefined
+                    if (layout && typeof layout.selectPanel === 'function') layout.selectPanel(PANEL_ID)
+                  },
+                },
+                t('manageBtn'),
+              ),
+              h(
+                'button',
+                { type: 'button', className: 'qs-btn', title: t('close'), onClick: closePanel },
+                '✕',
+              ),
+            ]
+          : [
+              h(
+                'button',
+                { type: 'button', className: 'qs-btn qs-back', title: t('backTip'), onClick: backToChat },
+                t('backBtn'),
+              ),
+              h('button', { type: 'button', className: 'qs-btn', title: t('exportBtn'), onClick: exportAll }, '↑'),
+              h('button', { type: 'button', className: 'qs-btn', title: t('importBtn'), onClick: function () { fileInput.click() } }, '↓'),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'qs-btn primary',
+                  onClick: function () {
+                    setEditing({ id: '', title: '', text: '', category: activeCat || '' })
+                  },
+                },
+                t('newBtn'),
+              ),
+            ]
+
+      var headChildren = [
+        h('span', { className: mode === 'manage' ? 'qs-page-title' : 'qs-title' }, mode === 'manage' ? t('manageTitle') : t('panelTitle')),
         h('span', { className: 'qs-count' }, snap.loading ? t('loading') : list.length + '/' + snap.phrases.length),
-        h('span', { className: 'qs-spacer' }),
-        h(
-          'button',
-          { type: 'button', className: 'qs-btn', title: t('exportBtn'), onClick: exportAll },
-          '↑',
-        ),
-        h(
-          'button',
-          { type: 'button', className: 'qs-btn', title: t('importBtn'), onClick: function () { fileInput.click() } },
-          '↓',
-        ),
-        h(
-          'button',
-          {
-            type: 'button',
-            className: 'qs-btn primary',
-            onClick: function () {
-              setEditing({ id: '', title: '', text: '', category: activeCat || '' })
-            },
-          },
-          t('newBtn'),
-        ),
-        h(
-          'button',
-          { type: 'button', className: 'qs-btn', title: t('close'), onClick: closePanel },
-          '✕',
-        ),
-      )
+      ]
+      if (mode === 'quick' && !snap.loading && list.length > 0) {
+        headChildren.push(h('span', { className: 'qs-quick-hint' }, t('quickHint')))
+      }
+      headChildren.push(h('span', { className: 'qs-spacer' }))
+      var head = h('div', { className: 'qs-head' + (mode === 'manage' ? ' qs-page-head' : '') }, headChildren.concat(headButtons))
 
       var searchRow = h(
         'div',
@@ -811,6 +932,27 @@ window.__ModuleLoader__.load({
         bodyNodes = list.map(function (item) {
           var label = item.title && item.title !== '' ? item.title : firstLine(item.text)
           var isHi = highlighted === item.id
+
+          // 紧凑行：浮层只显「序号 + 标题（+置顶📌）」，一行一条，9 条一屏全见。
+          // 正文预览与 6 个按钮都移到「管理」页，避免为了插入而占掉半屏。
+          if (mode === 'quick') {
+            return h(
+              'div',
+              {
+                key: item.id,
+                'data-id': item.id,
+                className: isHi ? 'qs-line hi' : 'qs-line',
+                title: item.text,
+                onClick: function () { insert(item.text) },
+                onMouseEnter: function () { setHighlighted(item.id) },
+              },
+              h('span', { className: 'qs-idx' }, String(list.indexOf(item) + 1)),
+              item.pinned ? h('span', { className: 'qs-pin' }, '📌') : null,
+              h('span', { className: 'qs-line-title' }, label),
+              item.category ? h('span', { className: 'qs-cat' }, item.category) : null,
+            )
+          }
+
           return h(
             'div',
             {
@@ -965,10 +1107,15 @@ window.__ModuleLoader__.load({
           )
         : null
 
+      // 两种形态的外层容器不同：浮层定位在输入框上方；管理页占满中央面板。
+      if (mode === 'manage') {
+        return h('div', { className: 'qs-page' }, [head, searchRow, chips, toastNode, h('div', { className: 'qs-list', ref: listRef }, bodyNodes), form, fileInput, footNode])
+      }
+
       return h(
         'div',
         { className: 'qs-dock' },
-        h('div', { className: 'qs-panel' }, [
+        h('div', { className: 'qs-panel qs-compact' }, [
           head,
           searchRow,
           chips,
@@ -978,6 +1125,48 @@ window.__ModuleLoader__.load({
           fileInput,
           footNode,
         ]),
+      )
+    }
+
+    /** 管理页包装：常驻渲染，靠 props.__mode 切到完整编辑形态。 */
+    function ManagePage(props) {
+      return Panel(Object.assign({}, props, { __mode: 'manage' }))
+    }
+
+    /** 侧边栏图标：宿主已包 onClick → layout.selectPanel(id)，这里补 logo 与兜底。 */
+    function SidebarIcon(props) {
+      var t = translator(props)
+      var onClick = function (e) {
+        if (props && typeof props.onOpen === 'function') {
+          props.onOpen(e)
+          return
+        }
+        if (props && typeof props.onClick === 'function') {
+          props.onClick(e)
+          return
+        }
+        try {
+          var layout = typeof ctxGet === 'function' ? ctxGet('layout') : undefined
+          if (layout && typeof layout.selectPanel === 'function') layout.selectPanel(PANEL_ID)
+        } catch (_) {
+          /* layout 服务缺席时静默 */
+        }
+      }
+      return h(
+        'span',
+        {
+          title: t('sidebarTip'),
+          onClick: onClick,
+          style: {
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            lineHeight: 1,
+            fontSize: '15px',
+          },
+        },
+        '📚',
       )
     }
 
@@ -1004,6 +1193,9 @@ window.__ModuleLoader__.load({
     function apply(ctx, config) {
       var slots = ctx.slots
       if (slots === undefined) return
+
+      // 记下根 ctx，供组件内兜底取 layout（侧栏图标点击、浮层「管理」按钮）
+      ctxGet = typeof ctx.get === 'function' ? function (k) { return ctx.get(k) } : null
 
       // i18n：向 locale 服务注册中英双语，并绑定翻译函数。
       // label 传 thunk，语言切换时会被重新投影。
@@ -1049,6 +1241,20 @@ window.__ModuleLoader__.load({
           { name: panelSlot, id: 'quick-send-panel', order: useDock ? 101 : 50, label: label('panelTitle') },
           Panel,
         )
+      })
+
+      // 侧边栏中央管理页（与 dsh-serial-panel 同一机制）：
+      //   宿主侧栏 PanelRow 自己绑 onClick → ctx.layout.selectPanel(id)，
+      //   而 selectPanel 只认「main keyed slot 里同一个 key」的注册项，缺 key 直接抛错。
+      //   所以下面两处 id/key 必须严格同值（都是 PANEL_ID），否则点图标毫无反应。
+      slots.inject('sidebar.panellist', function () {
+        return slots.register(
+          { name: 'sidebar.panellist', id: PANEL_ID, order: 62, label: label('sidebarLabel') },
+          SidebarIcon,
+        )
+      })
+      slots.inject('main', function () {
+        return slots.register({ name: 'main', key: PANEL_ID }, ManagePage)
       })
 
       console.log('[quick-send] client ready (panel slot: ' + panelSlot + ')')

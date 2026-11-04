@@ -20,7 +20,7 @@ const CLIENT = path.join(here, '..', 'src', 'client.js')
  * 搭一个最小 React 替身并加载 client.js。
  * 返回 { Panel, Trigger, hooks, render }，hooks 记录本次渲染的 Hook 调用序列。
  */
-function loadClient() {
+function loadClient(services) {
   const src = fs.readFileSync(CLIENT, 'utf8')
 
   let pool = []
@@ -82,18 +82,30 @@ function loadClient() {
   const ctx = {
     slots: {
       inject(_key, cb) { const d = cb(); return typeof d === 'function' ? d : () => {} },
-      register(o, c) { registered[o.id] = c; return () => {} },
+      // main 槽按 key 注册（管理页），其余按 id 注册
+      register(o, c) { registered[o.id || 'main:' + o.key] = c; return () => {} },
     },
     effect(fn) { const d = fn(); return typeof d === 'function' ? d : () => {} },
+    // services 可注入假的 layout 等服务，用来验证 selectPanel 调用
+    get(k) { return services && services[k] !== undefined ? services[k] : undefined },
   }
   mod.apply(ctx, {})
 
-  /** 直接渲染 Panel；before 可预先改动 hook 池（模拟 open/数据） */
+  /** 直接渲染浮层 Panel；before 可预先改动 hook 池（模拟 open/数据） */
   function renderPanel(props, before) {
     idx = 0
     trace = []
     if (before) before(pool)
     const out = registered['quick-send-panel'](props)
+    return { out, hookCount: idx, trace: trace.slice() }
+  }
+
+  /** 渲染侧边栏中央管理页（完整 CRUD 形态；常驻，不依赖 open） */
+  function renderManage(props, before) {
+    idx = 0
+    trace = []
+    if (before) before(pool)
+    const out = registered['main:quick-send'](props)
     return { out, hookCount: idx, trace: trace.slice() }
   }
 
@@ -106,7 +118,7 @@ function loadClient() {
     return { hookCount: idx, pool }
   }
 
-  return { mod, registered, renderPanel, initPool, pool: () => pool }
+  return { mod, registered, renderPanel, renderManage, initPool, pool: () => pool }
 }
 
 /** 深度查找满足条件的节点 */
@@ -194,12 +206,29 @@ test('open=false 时不渲染任何内容', () => {
   assert.equal(out, null, '关闭态应 return null')
 })
 
-test('open=true 且有数据时渲染条目，标题为空则回退正文首行', () => {
+test('浮层紧凑形态：只渲序号+标题一行，不渲正文预览与按钮', () => {
   const c = loadClient()
   const props = makeProps()
   c.initPool(props)
   const { out } = c.renderPanel(props, (p) => {
     p[0] = { v: true }
+    p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: ['开发'] } }
+  })
+  const lines = findAll(out, (n) => n.props && String(n.props.className || '').split(' ').includes('qs-line'))
+  assert.equal(lines.length, 2, '应渲染两条紧凑行')
+  // 浮层不该出现完整卡片的正文预览与操作按钮（那是管理页的事）
+  assert.equal(findAll(out, (n) => n.props && String(n.props.className || '').includes('qs-prev')).length, 0)
+  assert.equal(findAll(out, (n) => n.props && String(n.props.className || '').includes('qs-acts')).length, 0)
+  const idx = findAll(lines[0], (n) => n.props && String(n.props.className || '').includes('qs-idx'))
+  assert.equal(idx.length, 1)
+  assert.equal(idx[0].children[0], '1', '序号应从 1 开始')
+})
+
+test('管理页完整形态：渲条目卡片，标题为空则回退正文首行', () => {
+  const c = loadClient()
+  const props = makeProps()
+  c.initPool(props)
+  const { out } = c.renderManage(props, (p) => {
     p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: ['开发'] } }
   })
   const items = findAll(out, (n) => n.props && String(n.props.className || '').includes('qs-item'))
@@ -238,8 +267,7 @@ test('点「填入」走 captureInsertion + insertText，且展开占位符', ()
     },
   })
   c.initPool(props)
-  const { out } = c.renderPanel(props, (p) => {
-    p[0] = { v: true }
+  const { out } = c.renderManage(props, (p) => {
     p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: [] } }
   })
 
@@ -268,8 +296,7 @@ test('insertText 返回 false 时重试两次（共 2 次抓光标），仍失�
     },
   })
   c.initPool(props)
-  const { out } = c.renderPanel(props, (p) => {
-    p[0] = { v: true }
+  const { out } = c.renderManage(props, (p) => {
     p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: [] } }
   })
   const items = findAll(out, (n) => n.props && String(n.props.className || '').includes('qs-item'))
@@ -292,8 +319,7 @@ test('phase=inert 时不尝试插入', () => {
     },
   })
   c.initPool(props)
-  const { out } = c.renderPanel(props, (p) => {
-    p[0] = { v: true }
+  const { out } = c.renderManage(props, (p) => {
     p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: [] } }
   })
   const items = findAll(out, (n) => n.props && String(n.props.className || '').includes('qs-item'))
@@ -309,8 +335,7 @@ test('删除需点两次：第一次只进入待确认态', () => {
   const c = loadClient()
   const props = makeProps()
   c.initPool(props)
-  const { out } = c.renderPanel(props, (p) => {
-    p[0] = { v: true }
+  const { out } = c.renderManage(props, (p) => {
     p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: [] } }
   })
   const items = findAll(out, (n) => n.props && String(n.props.className || '').includes('qs-item'))
@@ -328,8 +353,7 @@ test('搜索过滤按标题、正文、分类子串匹配', () => {
   const c = loadClient()
   const props = makeProps()
   c.initPool(props)
-  const { out } = c.renderPanel(props, (p) => {
-    p[0] = { v: true }
+  const { out } = c.renderManage(props, (p) => {
     p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: [] } }
     p[3] = { v: '正文乙' } // query 命中第二条
   })
@@ -341,8 +365,7 @@ test('分类过滤只显示该分类', () => {
   const c = loadClient()
   const props = makeProps()
   c.initPool(props)
-  const { out } = c.renderPanel(props, (p) => {
-    p[0] = { v: true }
+  const { out } = c.renderManage(props, (p) => {
     p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: ['开发'] } }
     p[4] = { v: '开发' }
   })
@@ -552,4 +575,157 @@ test('拿不到路径时底部提示整块不渲染（不报错、不留空行�
   })
   const foot = findAll(out, (n) => n.props && String(n.props.className || '').includes('qs-foot'))
   assert.equal(foot.length, 0)
+})
+// ---------------------------------------------------------------- 数字键 / 侧边栏页
+
+test('数字键 1-9 直接插入第 N 条（搜索框为空时）', () => {
+  const c = loadClient()
+  let inserted = null
+  const props = makeProps({
+    inputActions: {
+      insertText(t) { inserted = t; return true },
+      captureInsertion() { return {} },
+    },
+  })
+  c.initPool(props)
+  const { out } = c.renderPanel(props, (p) => {
+    p[0] = { v: true }
+    p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: [] } }
+  })
+  const search = findAll(out, (n) => n.props && String(n.props.className || '').includes('qs-search'))[0]
+  let prevented = false
+  search.props.onKeyDown({ key: '2', preventDefault() { prevented = true } })
+  assert.equal(inserted, SAMPLE[1].text, '按 2 应插入第二条正文')
+  assert.ok(prevented, '应阻止默认输入')
+})
+
+test('数字键在搜索框有内容时不生效（不能抢走用户输入）', () => {
+  const c = loadClient()
+  let inserted = null
+  const props = makeProps({
+    inputActions: {
+      insertText(t) { inserted = t; return true },
+      captureInsertion() { return {} },
+    },
+  })
+  c.initPool(props)
+  const { out } = c.renderPanel(props, (p) => {
+    p[0] = { v: true }
+    p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: [] } }
+    p[3] = { v: '正文' }
+  })
+  const search = findAll(out, (n) => n.props && String(n.props.className || '').includes('qs-search'))[0]
+  search.props.onKeyDown({ key: '1', preventDefault() {} })
+  assert.equal(inserted, null, '搜索中不应被数字键抢走')
+})
+
+test('数字键超出条目数时不插入', () => {
+  const c = loadClient()
+  let inserted = null
+  const props = makeProps({
+    inputActions: {
+      insertText(t) { inserted = t; return true },
+      captureInsertion() { return {} },
+    },
+  })
+  c.initPool(props)
+  const { out } = c.renderPanel(props, (p) => {
+    p[0] = { v: true }
+    p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: [] } }
+  })
+  const search = findAll(out, (n) => n.props && String(n.props.className || '').includes('qs-search'))[0]
+  search.props.onKeyDown({ key: '9', preventDefault() {} })
+  assert.equal(inserted, null, '只有 2 条时按 9 应无动作')
+})
+
+test('侧边栏图标与中央管理页都已注册，且 id/key 严格同值', () => {
+  const c = loadClient()
+  assert.ok(c.registered['quick-send'], '应注册 sidebar.panellist 图标（id=quick-send）')
+  assert.ok(c.registered['main:quick-send'], '应注册 main 管理页（key=quick-send）')
+})
+
+test('管理页常驻渲染：不依赖浮层开关', () => {
+  const c = loadClient()
+  const props = makeProps()
+  c.initPool(props)
+  const { out } = c.renderManage(props, (p) => {
+    p[0] = { v: false } // 浮层是关的
+    p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: [] } }
+  })
+  assert.ok(out, '管理页不应因浮层关闭而不渲染')
+  const items = findAll(out, (n) => n.props && String(n.props.className || '').includes('qs-item'))
+  assert.equal(items.length, 2)
+})
+
+test('管理页有导入/导出/新建按钮，浮层只有「管理」入口', () => {
+  const c = loadClient()
+  const props = makeProps()
+  c.initPool(props)
+  const quick = c.renderPanel(props, (p) => {
+    p[0] = { v: true }
+    p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: [] } }
+  })
+  const quickBtns = findAll(quick.out, (n) => n.type === 'button').map((n) => n.children.flat().join(''))
+  assert.ok(quickBtns.includes('管理'), '浮层应有「管理」按钮')
+  assert.ok(!quickBtns.includes('＋ 新建'), '浮层不该有新建（搬去管理页了）')
+
+  const manage = c.renderManage(props, (p) => {
+    p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: [] } }
+  })
+  const manageBtns = findAll(manage.out, (n) => n.type === 'button').map((n) => n.children.flat().join(''))
+  assert.ok(manageBtns.includes('＋ 新建'), '管理页应有新建')
+  assert.ok(!manageBtns.includes('管理'), '管理页不该再有「管理」按钮')
+})
+// ---------------------------------------------------------------- 管理页返回对话
+
+test('管理页有「返回对话」按钮，点击调 layout.selectPanel(null)', () => {
+  let called = null
+  const c = loadClient({ layout: { selectPanel(id) { called = id } } })
+  const props = makeProps()
+  c.initPool(props)
+  const { out } = c.renderManage(props, (p) => {
+    p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: [] } }
+  })
+  const back = findAll(out, (n) => n.type === 'button' && String(n.props.className || '').includes('qs-back'))[0]
+  assert.ok(back, '管理页应有返回按钮')
+  back.props.onClick()
+  assert.equal(called, null, 'selectPanel 应收到 null（显示对话）')
+})
+
+test('浮层里点「管理」调 layout.selectPanel("quick-send")', () => {
+  let called = '<none>'
+  const c = loadClient({ layout: { selectPanel(id) { called = id } } })
+  const props = makeProps()
+  c.initPool(props)
+  const { out } = c.renderPanel(props, (p) => {
+    p[0] = { v: true }
+    p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: [] } }
+  })
+  const btns = findAll(out, (n) => n.type === 'button')
+  const manage = btns.find((n) => n.children.flat().join('') === '管理')
+  assert.ok(manage, '浮层应有「管理」按钮')
+  manage.props.onClick()
+  assert.equal(called, 'quick-send')
+})
+
+test('layout 服务缺席时点返回不抛错（降级为提示）', () => {
+  const c = loadClient() // 不给 layout
+  const props = makeProps()
+  c.initPool(props)
+  const { out } = c.renderManage(props, (p) => {
+    p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: [] } }
+  })
+  const back = findAll(out, (n) => n.type === 'button' && String(n.props.className || '').includes('qs-back'))[0]
+  assert.doesNotThrow(() => back.props.onClick())
+})
+
+test('返回按钮在管理页才有，浮层没有', () => {
+  const c = loadClient({ layout: { selectPanel() {} } })
+  const props = makeProps()
+  c.initPool(props)
+  const quick = c.renderPanel(props, (p) => {
+    p[0] = { v: true }
+    p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: [] } }
+  })
+  assert.equal(findAll(quick.out, (n) => String((n.props || {}).className || '').includes('qs-back')).length, 0)
 })
