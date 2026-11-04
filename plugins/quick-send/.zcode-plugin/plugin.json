@@ -1,6 +1,6 @@
 {
   "name": "quick-send",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "会话侧栏快捷发送面板：常用语与 DSH 双向共享（shared-phrases），一键复制/发送（分类/搜索/置顶/占位符，Rust 原生后端 ~4MB）。",
   "keywords": ["snippets", "quick-send", "clipboard", "mcp-app", "productivity", "rust", "shared"],
   "userConfig": {

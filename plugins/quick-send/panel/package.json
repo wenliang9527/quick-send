@@ -1,6 +1,6 @@
 {
   "name": "quick-send-panel",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Quick-Send 面板（MCP App）：Rust 原生 server + 面板构建",
   "scripts": {
     "build": "node build.mjs",
