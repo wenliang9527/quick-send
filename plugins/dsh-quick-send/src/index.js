@@ -10,6 +10,9 @@
 //   POST /__quick-send/view    { id, pinned?, order? }         -> list
 //   POST /__quick-send/reorder { id, direction:'up'|'down' }   -> list
 //   GET  /__quick-send/paths   -> { phrasesFile, viewFile }    （面板显示数据位置）
+//
+// 另外向 ctx.tools 注册 4 个 agent 工具（见 agent-tools.js）：
+//   quick_send_list / quick_send_add / quick_send_update / quick_send_delete
 
 import {
   defaultPhrasesFile,
@@ -22,6 +25,7 @@ import {
   genId,
   nowIso,
 } from './store.js'
+import { registerAgentTools } from './agent-tools.js'
 
 const name = '@wenliang9527/dsh-quick-send'
 const inject = []
@@ -235,11 +239,31 @@ export function apply(ctx, config) {
     }
   }
 
-  const ws = ctx.get('webServer')
+  const ws = typeof ctx.get === 'function' ? ctx.get('webServer') : undefined
   if (ws !== undefined) {
     registerEndpoints(ws, ctx)
-  } else {
-    ctx.inject(['webServer'], (sub) => registerEndpoints(sub.webServer, sub))
+  } else if (typeof ctx.inject === 'function') {
+    ctx.inject(['webServer'], (sub) => {
+      const w = sub && sub.webServer !== undefined ? sub.webServer : sub && typeof sub.get === 'function' ? sub.get('webServer') : undefined
+      if (w !== undefined) registerEndpoints(w, sub)
+    })
+  }
+
+  // ---- Agent 工具：让模型能直接读写常用语 ----
+  // tools 服务可能晚于本插件就绪：先试直接取，取不到再等注入。
+  // 注意 ctx.inject 回调拿到的是子作用域对象，上面直接挂着服务本身，
+  // 不一定有 get()，所以这里把服务显式传给 registerAgentTools。
+  const mountTools = (toolsService) => {
+    ctx.effect(() => registerAgentTools({ phrasesFile, tools: toolsService }))
+  }
+  const toolsNow = typeof ctx.get === 'function' ? ctx.get('tools') : undefined
+  if (toolsNow !== undefined) {
+    mountTools(toolsNow)
+  } else if (typeof ctx.inject === 'function') {
+    ctx.inject(['tools'], (sub) => {
+      const t = sub && sub.tools !== undefined ? sub.tools : sub && typeof sub.get === 'function' ? sub.get('tools') : undefined
+      if (t !== undefined) mountTools(t)
+    })
   }
 
   console.log('[quick-send] host ready')

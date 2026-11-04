@@ -1,5 +1,9 @@
 # dsh-quick-send
 
+[![npm version](https://img.shields.io/npm/v/@wenliang9527/dsh-quick-send.svg)](https://www.npmjs.com/package/@wenliang9527/dsh-quick-send)
+[![license](https://img.shields.io/npm/l/@wenliang9527/dsh-quick-send.svg)](https://github.com/wenliang9527/quick-send/blob/master/LICENSE)
+[![tests](https://img.shields.io/badge/tests-71%20passed-brightgreen.svg)](#测试)
+
 DSH 常用语快捷发送插件 —— 输入框旁的常用语浮层面板，**点一下插到光标处**（不覆盖、不自动发送）。
 
 与 ZCode 的 `quick-send` 插件**共享同一份内容源**，两侧各自维护置顶与排序。
@@ -33,6 +37,50 @@ DSH 常用语快捷发送插件 —— 输入框旁的常用语浮层面板，**
 - **中英双语**：跟随「设置 → 通用 → 语言」自动切换
 - **删除二次确认**：第一次点变红「确认删除」，3 秒内再点才真删（不用原生弹窗）
 - **交互**：插入后自动收起；`Esc` 收起（编辑中不响应）；点整条卡片即插入
+- **Agent 可读写**：4 个模型可调用工具，让 AI 直接帮你存取常用语（见下）
+
+## Agent 工具
+
+模型可以直接读写常用语，无需你手动操作。注册了 4 个工具：
+
+| 工具 | 作用 | 关键约束 |
+|---|---|---|
+| `quick_send_list` | 列出常用语，支持分类/关键词过滤 | 只读，可并发；默认不返回正文（省 token） |
+| `quick_send_add` | 新增一条 | 正文必填；超长静默截断 |
+| `quick_send_update` | 修改一条 | **只按 id 定位**，只传要改的字段 |
+| `quick_send_delete` | 删除一条 | **只按 id 定位** + **必须 `confirm: true`** |
+
+### 为什么 update/delete 只认 id
+
+**标题可以重复**——用户完全可能建两条同名短语。如果允许按标题定位，agent 会静默改到/删错那一条。
+
+正确姿势写在工具 description 里，模型会遵守：
+
+```
+先 quick_send_list 拿 id  →  再 quick_send_update / quick_send_delete
+```
+
+### 长度上限
+
+标题 ≤120 / 正文 ≤20000 / 分类 ≤20 字符，超长**静默截断**（不报错）。
+这条也写进了 `quick_send_add` 的 description，模型拟稿时会自行控制长度。
+
+### Agent 建的条目如何识别
+
+新建条目的 id 带 `dsh-agent-` 前缀（如 `dsh-agent-mw1sjfiv-leng`），便于人工辨认。
+
+> **注意**：契约只要求 id 唯一，前缀没有语义约束。ZCode 侧 agent 建的条目是纳秒时间戳 id，
+> 没有统一前缀，所以「按前缀识别 agent 条目」**只在 DSH 侧成立**。
+
+如果需要跨侧追溯，契约外的零成本做法是**分类命名约定**：让 agent 把整理的条目写进
+`agent/` 开头的分类（如 `agent/整理`）。`category` 本就是自由字符串，两侧面板都能按分类过滤。
+工具 description 里对此给的是**建议而非强制**，模型可按内容选更合适的分类。
+
+### 并发安全
+
+写操作（add/update/delete）都标记 `isConcurrencySafe: false`，同一次对话内不会并发写文件。
+跨侧（ZCode 与 DSH）同时写遵守契约 §4 的「全量读改写 + 原子替换 + last-write-wins」，
+对「单用户手点」和「低频 agent 写入」同样成立。
 
 ## 键盘操作
 
@@ -167,11 +215,13 @@ dsh-quick-send/
 │  ├─ index.js              Host 半区：HTTP 端点 + CRUD + 视图
 │  ├─ store.js              共享内容读写 + 本地视图 + 原子写 + 自愈
 │  ├─ expand.js             占位符展开（纯函数）
+│  ├─ agent-tools.js        4 个 agent 工具（list/add/update/delete）
 │  └─ client.js             Client 半区：📚 按钮 + 浮层面板（ModuleLoader bundle）
 └─ test/
    ├─ store.test.mjs        存储与占位符单测（25 项）
    ├─ client.test.mjs       Client 半区运行时测试（21 项，含 Hooks 顺序守门）
-   └─ e2e.test.mjs          真实 HTTP 端到端测试（25 项）
+   ├─ e2e.test.mjs          真实 HTTP 端到端测试（25 项）
+   └─ agent-tools.test.mjs  Agent 工具测试（25 项）
 ```
 
 ### 槽位选择
@@ -189,10 +239,10 @@ dsh-quick-send/
 ```bash
 cd plugins/dsh-quick-send && npm test
 # 或
-node --test test/store.test.mjs test/client.test.mjs test/e2e.test.mjs
+node --test test/store.test.mjs test/client.test.mjs test/e2e.test.mjs test/agent-tools.test.mjs
 ```
 
-**共 71 项，全部通过。**
+**共 96 项，全部通过。**
 
 ### store.test.mjs（25 项）
 
@@ -237,6 +287,21 @@ node --test test/store.test.mjs test/client.test.mjs test/e2e.test.mjs
 > **重要分层验证**：磁盘 `phrases.json` 是 **6 字段**（内容契约），
 > API `/list` 返回 **8 字段**（6 + `pinned`/`order`）。两者刻意不同，测试都有断言。
 
+### agent-tools.test.mjs（25 项）
+
+验证 4 个 Agent 工具。重点守住三条纪律：
+
+| 分组 | 覆盖 |
+|---|---|
+| **注册与 schema** | 4 个工具名符合 snake_case、都有 description/parameters/output/execute、写操作不可并发 |
+| **定位纪律** | delete 只有 `id`+`confirm`；update 的 `title` 是「新值」而非定位参数；只传 title 不带 id 必须报「缺少 id」 |
+| **add** | 六字段落盘、`dsh-agent-` 前缀、空正文报错、超长截断、title/category 可省 |
+| **list** | 默认不含正文、`includeText` 才返回、按分类过滤、关键词匹配标题/正文/分类且大小写不敏感 |
+| **update** | 只改传入字段、未传保持不变、**id 与 createdAt 不变**（否则另一侧 view 失效）、无改动时不写盘、值没变不计入 changed |
+| **delete** | 必须 `confirm:true`、id 不存在报错 |
+| **同标题守门** | 两条同名条目时，update/delete **只命中 id 指定的那条** —— 直接验证「按 id 定位」的必要性 |
+| **渲染与降级** | 各工具 render 产出可读文本、空结果给提示、tools 服务不可用时不抛错 |
+
 > `client.test.mjs` 是「点了打不开」事故的产物。当时语法检查和单测都通过，
 > 但 Hooks 顺序违规是**运行时**错误，只有开关面板才触发——单测测不到。现在这道守门补上了。
 
@@ -254,10 +319,11 @@ node <plugin-write-skill>/scripts/validate-names.mjs --manifest ./dsh-plugin.nam
 |---|---|
 | packageName | `@wenliang9527/dsh-quick-send` |
 | pluginNames | `@wenliang9527/dsh-quick-send` |
+| tools | `quick_send_list` `quick_send_add` `quick_send_update` `quick_send_delete` |
 | loaderIds | `quick-send` |
 | routes | 6 个 `/__quick-send/*` exact 路由 |
 
-> 校验通过（exit 0，无警告）。本插件不注册 service / tool / command / skill / event / settings namespace。
+> 校验通过（exit 0，无警告）。本插件不注册 service / command / skill / event / settings namespace。
 
 ### 打包产物验证
 

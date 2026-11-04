@@ -8,10 +8,15 @@
     "packageName": "@wenliang9527/dsh-quick-send"
   },
   "names": {
-    "pluginNames": ["@wenliang9527/dsh-quick-send"]",
+    "pluginNames": ["@wenliang9527/dsh-quick-send"],
     "loaderIds": ["quick-send"],
     "services": [],
-    "tools": [],
+    "tools": [
+      "quick_send_list",
+      "quick_send_add",
+      "quick_send_update",
+      "quick_send_delete"
+    ],
     "commands": [],
     "skills": [],
     "skillProviders": [],
