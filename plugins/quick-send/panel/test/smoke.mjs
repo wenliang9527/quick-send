@@ -115,7 +115,7 @@ try {
   writeFileSync(join(dataDir, "phrases.json"), "{broken json!", "utf8");
   r = await call("list_snippets");
   check("损坏→空数据启动", !r.isError && r.data.snippets.length === 0);
-  check("损坏留证 .bad", existsSync(join(dataDir, "phrases.json.bad")));
+  check("损坏留证 .bad-<ts>", readdirSync(dataDir).some((f) => f.startsWith("phrases.json.bad-")));
 
   // ── M2 分类 ──
   r = await call("save_snippet", { snippet: { title: "catA", body: "bA", category: "嵌入式" } });
@@ -168,16 +168,21 @@ try {
   r = await call("list_snippets");
   check("清理后为空", r.data.snippets.length === 0);
 
-  // ── 上限（放最后：占满存储） ──
-  const many = Array.from({ length: 200 }, (_, i) => ({ title: `t${i}`, body: `b${i}` }));
-  let over = false;
-  for (const s of many) {
-    const rr = await call("save_snippet", { snippet: s });
-    if (rr.isError) { over = true; break; }
-  }
-  check("200 条可达", !over);
+  // ── 条数护栏（放最后：占满存储;v0.5.1 起 2000,直接预置文件避免逐条慢存） ──
+  const bulk = {
+    schemaVersion: 1,
+    phrases: Array.from({ length: 2000 }, (_, i) => ({
+      id: `bulk-${i}`, title: `t${i}`, text: `b${i}`, category: "",
+      createdAt: "2026-11-04T00:00:00.000Z", updatedAt: "2026-11-04T00:00:00.000Z",
+    })),
+  };
+  writeFileSync(join(dataDir, "phrases.json"), JSON.stringify(bulk, null, 2), "utf8");
+  r = await call("list_snippets");
+  check("2000 条外部文件可读", !r.isError && r.data.snippets.length === 2000);
   r = await call("save_snippet", { snippet: { title: "超限", body: "x" } });
-  check("第 201 条被拒", r.isError && r.data.error?.code === "validation");
+  check("第 2001 条被拒", r.isError && r.data.error?.code === "validation");
+  r = await call("save_snippet", { snippet: { id: "bulk-0", title: "改", body: "改", category: "", pinned: false } });
+  check("满额时仍可改已有条目", !r.isError && r.data.snippets.length === 2000);
 } catch (e) {
   console.log("FAIL 异常:", e.message);
   failed++;

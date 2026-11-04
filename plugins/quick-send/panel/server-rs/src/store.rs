@@ -16,9 +16,12 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const MAX_SNIPPETS: usize = 200;
-pub const MAX_TITLE: usize = 50;
-pub const MAX_BODY: usize = 10 * 1024;
+/// 上限口径对齐 DSH 侧（HANDOFF-DSH §5：120/20000/20 **字符**）。DSH 超限截断、本侧超限拒绝——
+/// 共同上界一致，任一侧存下的数据另一侧都能原样读/改，不会出现"存得进、改不动"。
+/// 条数契约无上限（DSH 无护栏）；2000 = 本侧防失控护栏，超出仅拒新增。
+pub const MAX_SNIPPETS: usize = 2000;
+pub const MAX_TITLE: usize = 120;
+pub const MAX_TEXT: usize = 20000;
 pub const MAX_CATEGORY: usize = 20;
 
 /// 共享侧条目:严格六字段,序列化永远全部输出（DSH 侧测试会校验齐全）
@@ -134,20 +137,72 @@ enum SharedLoad {
 
 fn load_shared() -> SharedLoad {
     let path = phrases_path();
-    let text = match fs::read_to_string(&path) {
+    let text = match read_text_bom(&path) {
         Ok(t) => t,
         Err(_) => return SharedLoad::Absent,
     };
-    match serde_json::from_str::<SharedFile>(&text) {
-        Ok(f) if f.schemaVersion == 1 => SharedLoad::Ok(f),
-        Ok(_) => SharedLoad::Unsupported,
+    // 先按任意 JSON 解：解析失败才是真损坏（隔离留证）；
+    // 能解析但 schemaVersion 缺失/不认识 = 格式不认识 → 读空表 + 拒写，文件原样不动（不隔离）。
+    let root: Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
         Err(_) => {
-            let bad = path.with_extension("json.bad");
-            let _ = fs::remove_file(&bad);
-            let _ = fs::rename(&path, &bad);
-            SharedLoad::Absent
+            quarantine(&path);
+            return SharedLoad::Absent;
         }
+    };
+    if root.get("schemaVersion").and_then(Value::as_u64) != Some(1) {
+        return SharedLoad::Unsupported;
     }
+    let Some(arr) = root.get("phrases").and_then(Value::as_array) else {
+        return SharedLoad::Unsupported; // 形状不对：同样只拒读写,不破坏文件
+    };
+    // 逐条规范化（对齐 DSH normalizePhrase）:缺 id/text 的跳过、未知字段丢弃、
+    // 重复 id 保留首条、时间戳非字符串回退当前时间（防排序错乱）。
+    let mut seen = std::collections::HashSet::new();
+    let mut phrases = Vec::new();
+    for item in arr {
+        let Some(obj) = item.as_object() else { continue };
+        let id = match obj.get("id").and_then(Value::as_str) {
+            Some(s) if !s.is_empty() => s,
+            _ => continue,
+        };
+        let text = match obj.get("text").and_then(Value::as_str) {
+            Some(s) => s,
+            None => continue, // 缺 text 整条跳过（DSH 同款）
+        };
+        if !seen.insert(id.to_string()) {
+            continue;
+        }
+        phrases.push(Phrase {
+            id: id.to_string(),
+            title: obj.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
+            text: text.to_string(),
+            category: obj.get("category").and_then(Value::as_str).unwrap_or("").to_string(),
+            createdAt: str_or_now(obj.get("createdAt")),
+            updatedAt: str_or_now(obj.get("updatedAt")),
+        });
+    }
+    SharedLoad::Ok(SharedFile { schemaVersion: 1, phrases })
+}
+
+/// 读文本并剥 UTF-8 BOM（DSH 侧容忍 BOM,契约外编辑器也可能写出带 BOM 的文件）
+fn read_text_bom(path: &PathBuf) -> std::io::Result<String> {
+    let text = fs::read_to_string(path)?;
+    Ok(text.strip_prefix('\u{feff}').map(str::to_string).unwrap_or(text))
+}
+
+/// 时间戳字段:非字符串或空串 → 当前时间（DSH isStr 校验失败同款回退）
+fn str_or_now(v: Option<&Value>) -> String {
+    match v.and_then(Value::as_str) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => now_iso(),
+    }
+}
+
+/// 坏文件隔离留证:<原名>.bad-<时间戳>,多次损坏证据不互相覆盖（对齐 DSH）
+fn quarantine(path: &PathBuf) {
+    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S%3f");
+    let _ = fs::rename(path, path.with_extension(format!("json.bad-{ts}")));
 }
 
 fn save_shared(file: &SharedFile) -> Result<(), String> {
@@ -169,16 +224,14 @@ fn empty_shared() -> SharedFile {
 
 fn load_view() -> View {
     let path = view_path();
-    let text = match fs::read_to_string(&path) {
+    let text = match read_text_bom(&path) {
         Ok(t) => t,
         Err(_) => return View::new(),
     };
     match serde_json::from_str(&text) {
         Ok(v) => v,
         Err(_) => {
-            let bad = path.with_extension("json.bad");
-            let _ = fs::remove_file(&bad);
-            let _ = fs::rename(&path, &bad);
+            quarantine(&path);
             View::new()
         }
     }
@@ -284,8 +337,8 @@ pub fn save_snippet(input: &Value) -> Result<Vec<Snippet>, StoreError> {
     if title.chars().count() > MAX_TITLE {
         return Err(("validation", format!("标题超限（{}/{} 字）", title.chars().count(), MAX_TITLE)));
     }
-    if text.len() > MAX_BODY {
-        return Err(("validation", format!("内容超限（{}/{} 字节）", text.len(), MAX_BODY)));
+    if text.chars().count() > MAX_TEXT {
+        return Err(("validation", format!("内容超限（{}/{} 字）", text.chars().count(), MAX_TEXT)));
     }
     if category.chars().count() > MAX_CATEGORY {
         return Err(("validation", format!("分类超限（{}/{} 字）", category.chars().count(), MAX_CATEGORY)));
@@ -401,7 +454,7 @@ pub fn rename_category(from: &str, to: &str) -> Result<(usize, Vec<Snippet>), St
 /// 旧文件改名 .migrated 留证。best-effort:任何失败只记日志不阻塞启动。
 pub fn migrate_once() {
     let legacy = legacy_path();
-    let Ok(text) = fs::read_to_string(&legacy) else {
+    let Ok(text) = read_text_bom(&legacy) else {
         return; // 无旧文件（全新安装）
     };
     #[derive(Deserialize)]
@@ -546,7 +599,79 @@ mod tests {
         let path = shared_path(&dir);
         drop(fs::write(&path, "{broken"));
         assert_eq!(list_snippets().len(), 0);
-        assert!(path.with_extension("json.bad").exists());
+        assert!(!path.exists()); // 原文件已被隔离
+        // 留证名带时间戳(.bad-<ts>),多次损坏证据不互相覆盖
+        let left: Vec<String> = fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("phrases.json.bad-"))
+            .collect();
+        assert_eq!(left.len(), 1);
+    }
+
+    #[test]
+    fn missing_schema_version_refuses_without_quarantine() {
+        // 合法 JSON 但缺 schemaVersion = 格式不认识:读空表 + 拒写,文件必须原样保留(不隔离)
+        let (_g, dir) = isolated();
+        let path = shared_path(&dir);
+        fs::write(&path, r#"{"phrases":[]}"#).unwrap();
+        assert_eq!(list_snippets().len(), 0);
+        assert!(save_snippet(&json!({"title":"t","body":"b"})).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), r#"{"phrases":[]}"#);
+    }
+
+    #[test]
+    fn bom_prefixed_shared_file_parses() {
+        // DSH/外部编辑器可能写出带 BOM 的文件:与 DSH 一致地容忍,而不是当损坏隔离
+        let (_g, dir) = isolated();
+        let path = shared_path(&dir);
+        let body = r#"{"schemaVersion":1,"phrases":[{"id":"dsh-bom","title":"BOM条","text":"t","category":"","createdAt":"2026-11-04T00:00:00.000Z","updatedAt":"2026-11-04T00:00:00.000Z"}]}"#;
+        fs::write(&path, "\u{feff}".to_string() + body).unwrap();
+        let list = list_snippets();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, "dsh-bom");
+        assert!(path.exists()); // 未被误隔离
+    }
+
+    #[test]
+    fn duplicate_ids_keep_first_and_skip_invalid_entries() {
+        // 逐条规范化(对齐 DSH normalizePhrase):重复 id 保留首条、缺 id/text 跳过、
+        // 未知字段丢弃、数字时间戳回退当前时间
+        let (_g, dir) = isolated();
+        let path = shared_path(&dir);
+        let dsh = json!({
+            "schemaVersion": 1,
+            "phrases": [
+                { "id": "dup", "title": "首条", "text": "first", "category": "", "createdAt": "2026-11-04T00:00:00.000Z", "updatedAt": "2026-11-04T00:00:00.000Z" },
+                { "id": "dup", "title": "后来者", "text": "second", "category": "", "createdAt": "2026-11-04T00:00:01.000Z", "updatedAt": "2026-11-04T00:00:01.000Z" },
+                { "title": "无id", "text": "x", "category": "" },
+                { "id": "no-text", "title": "缺正文" },
+                { "id": "extra", "text": "带未知字段", "extra": 1, "createdAt": 12345, "category": "" }
+            ]
+        });
+        fs::write(&path, serde_json::to_string_pretty(&dsh).unwrap()).unwrap();
+        let list = list_snippets();
+        assert_eq!(list.len(), 2); // dup 首条 + extra
+        assert_eq!(list.iter().find(|s| s.id == "dup").unwrap().body, "first");
+        let extra = list.iter().find(|s| s.id == "extra").unwrap();
+        assert!(extra.createdAt.contains('T')); // 数字时间戳已回退 ISO
+    }
+
+    #[test]
+    fn dsh_long_entry_fully_editable() {
+        // 上限对齐的意义:DSH 存得下的长条目(标题 100 字/正文 15000 字),本侧读全量、改存不报错
+        let (_g, dir) = isolated();
+        let path = shared_path(&dir);
+        let dsh = json!({
+            "schemaVersion": 1,
+            "phrases": [{ "id": "dsh-long", "title": "长".repeat(100), "text": "正".repeat(15000), "category": "写作", "createdAt": "2026-11-04T00:00:00.000Z", "updatedAt": "2026-11-04T00:00:00.000Z" }]
+        });
+        fs::write(&path, serde_json::to_string_pretty(&dsh).unwrap()).unwrap();
+        let list = list_snippets();
+        assert_eq!(list[0].body.chars().count(), 15000); // 读不截断
+        let r = save_snippet(&json!({"id":"dsh-long","title":"长".repeat(100),"body":"改".repeat(15000),"category":"写作","pinned":false})).unwrap();
+        assert_eq!(r[0].body.chars().count(), 15000); // 改存不报错不截断
     }
 
     #[test]
@@ -554,7 +679,11 @@ mod tests {
         let (_g, _dir) = isolated();
         assert!(save_snippet(&json!({"title":"  ","body":"b"})).is_err());
         assert!(save_snippet(&json!({"title":"t","body":"  "})).is_err());
-        assert!(save_snippet(&json!({"title":"x".repeat(51),"body":"b"})).is_err());
+        // 上限对齐 DSH(120/20000/20 字符):边界值可存,超 1 拒绝
+        assert!(save_snippet(&json!({"title":"x".repeat(120),"body":"b"})).is_ok());
+        assert!(save_snippet(&json!({"title":"x".repeat(121),"body":"b"})).is_err());
+        assert!(save_snippet(&json!({"title":"t","body":"字".repeat(20000)})).is_ok());
+        assert!(save_snippet(&json!({"title":"t","body":"字".repeat(20001)})).is_err());
         assert!(save_snippet(&json!({"title":"t","body":"b","category":"x".repeat(21)})).is_err());
     }
 

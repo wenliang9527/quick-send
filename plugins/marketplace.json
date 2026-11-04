@@ -8,7 +8,7 @@
     {
       "name": "quick-send",
       "source": "./quick-send",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "description": "会话侧栏快捷发送面板：常用语管理，一键复制到剪贴板或发送（与 DSH 共享常用语，Rust 原生后端 ~4MB）。",
       "category": "productivity"
     }

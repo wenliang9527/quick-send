@@ -124,12 +124,12 @@
     <div id="overlay">
       <div id="drawer">
         <h2 id="drawer-title">新建常用语</h2>
-        <label for="f-title">标题（必填，≤50 字）</label>
-        <input id="f-title" maxlength="50" placeholder="如：复位日志采集" />
+        <label for="f-title">标题（必填，≤120 字）</label>
+        <input id="f-title" maxlength="120" placeholder="如：复位日志采集" />
         <label for="f-category">分类（可选，≤20 字）</label>
         <input id="f-category" maxlength="20" list="cat-list" placeholder="如：嵌入式（可留空）" />
         <datalist id="cat-list"></datalist>
-        <label for="f-body">内容（必填，≤10KB）</label>
+        <label for="f-body">内容（必填，≤20000 字）</label>
         <textarea id="f-body" placeholder="点击卡片「复制」后粘贴到发送栏；点「发送」经确认直接进会话"></textarea>
         <div class="field-err" id="f-err"></div>
         <div class="hint">
