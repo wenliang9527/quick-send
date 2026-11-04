@@ -3,7 +3,7 @@
 ZCode 会话侧栏「快捷发送」面板：常用语管理，一键复制到剪贴板或发送。
 设计与调研结论见 [docs/design.md](docs/design.md)（含宿主 API 调研、spike 实测、性能优化记录）。
 
-## 当前状态（v0.5.3）
+## 当前状态（v0.5.4）
 
 - M0 Spike ✅ / M1 MVP ✅ / M2 完整功能 ✅ / M3 收尾 ✅
 - **v0.4.0：server 重写为 Rust 原生单文件 exe——常驻内存 54.5MB → 3.8MB（14×），exe 仅 0.5MB**

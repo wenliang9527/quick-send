@@ -74,6 +74,15 @@
       .pin-flag { color: var(--warn); font-size: 12px; }
       #empty { color: var(--muted); text-align: center; padding: 32px 12px; }
       #empty button { margin-top: 10px; }
+      /* 分类建议:内联 chips(点击填入)。不用原生 datalist——webview 里弹层悬空压内容区 */
+      .cat-sugs { display: flex; flex-wrap: wrap; gap: 4px; margin: -2px 0 6px; }
+      .cat-sugs:empty { display: none; }
+      .cat-sugs button {
+        font-size: 11px; padding: 1px 8px; border-radius: 999px;
+        border: 1px solid var(--border); background: transparent; color: var(--muted);
+        cursor: pointer; font-family: inherit;
+      }
+      .cat-sugs button:hover { border-color: var(--accent); color: var(--fg); }
       /* 首帧加载指示:数据到达前显示(纯 CSS,语言无关;vr() 首次渲染即接管) */
       .dots { display: inline-flex; gap: 6px; }
       .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: qs-pulse 1.1s ease-in-out infinite; }
@@ -133,8 +142,8 @@
         <label for="f-title">标题（必填，≤120 字）</label>
         <input id="f-title" maxlength="120" placeholder="如：复位日志采集" />
         <label for="f-category">分类（可选，≤20 字）</label>
-        <input id="f-category" maxlength="20" list="cat-list" placeholder="如：嵌入式（可留空）" />
-        <datalist id="cat-list"></datalist>
+        <input id="f-category" maxlength="20" placeholder="如：嵌入式（可留空）" />
+        <div id="cat-sugs" class="cat-sugs"></div>
         <label for="f-body">内容（必填，≤20000 字）</label>
         <textarea id="f-body" placeholder="点击卡片「复制」后粘贴到发送栏；点「发送」经确认直接进会话"></textarea>
         <div class="field-err" id="f-err"></div>

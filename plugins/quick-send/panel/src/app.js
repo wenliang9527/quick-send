@@ -14,7 +14,7 @@
 import { App, applyDocumentTheme } from "@modelcontextprotocol/ext-apps";
 import { stringsFor } from "./i18n.js";
 
-const app = new App({ name: "quick-send", version: "0.5.3" }, {});
+const app = new App({ name: "quick-send", version: "0.5.4" }, {});
 
 const els = {
   search: document.getElementById("search"),
@@ -27,7 +27,7 @@ const els = {
   drawerTitle: document.getElementById("drawer-title"),
   fTitle: document.getElementById("f-title"),
   fCategory: document.getElementById("f-category"),
-  catList: document.getElementById("cat-list"),
+  catSugs: document.getElementById("cat-sugs"),
   fBody: document.getElementById("f-body"),
   fErr: document.getElementById("f-err"),
   phHint: document.getElementById("ph-hint"),
@@ -323,12 +323,17 @@ function openEditor(snippet) {
   els.fCategory.value = snippet?.category ?? "";
   els.fBody.value = snippet?.body ?? "";
   els.fErr.style.display = "none";
-  // 分类建议：已有分类 + （编辑中的）当前值
-  els.catList.textContent = "";
+  // 分类建议：内联 chips(点击填入)。不用原生 datalist——webview 里弹层悬空、压内容区
+  els.catSugs.textContent = "";
   for (const c of categories()) {
-    const opt = document.createElement("option");
-    opt.value = c;
-    els.catList.appendChild(opt);
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = c;
+    b.onclick = () => {
+      els.fCategory.value = c;
+      els.fCategory.focus();
+    };
+    els.catSugs.appendChild(b);
   }
   els.overlay.classList.add("show");
   els.fTitle.focus();

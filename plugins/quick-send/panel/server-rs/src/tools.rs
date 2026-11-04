@@ -7,7 +7,7 @@ use serde_json::{json, Map, Value};
 
 pub const RESOURCE_URI: &str = "ui://quick-send/panel.html";
 pub const SURFACE_ID: &str = "quick-send";
-pub const VERSION: &str = "0.5.3";
+pub const VERSION: &str = "0.5.4";
 const PREVIEW_CHARS: usize = 80;
 
 fn schema_empty() -> Value {
