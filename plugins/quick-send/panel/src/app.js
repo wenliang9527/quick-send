@@ -14,7 +14,7 @@
 import { App, applyDocumentTheme } from "@modelcontextprotocol/ext-apps";
 import { stringsFor } from "./i18n.js";
 
-const app = new App({ name: "quick-send", version: "0.5.6" }, {});
+const app = new App({ name: "quick-send", version: "0.5.7" }, {});
 
 const els = {
   search: document.getElementById("search"),
