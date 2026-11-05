@@ -6,7 +6,7 @@
 // 设计：不启动 DSH，只把 webServer 换成一个把 register() 收到的 handler
 // 挂到真的 http.Server 上的替身——这样测的是真实的请求/响应路径。
 
-import test from 'node:test'
+import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import fs from 'node:fs'
@@ -17,9 +17,26 @@ import { fileURLToPath } from 'node:url'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const INDEX = path.join(here, '..', 'src', 'index.js')
 
+/**
+ * 本文件每个用例都调 startHost() 建临时目录，跑一次会建 31 个。
+ * 早期不清理，实测在系统 TEMP 累积上千个 —— 测试自身的资源泄漏。
+ * 这里统一登记，结束时一次性删除。
+ */
+const createdDirs = []
+after(() => {
+  for (const dir of createdDirs) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true })
+    } catch (e) {
+      /* 清理失败不致命 */
+    }
+  }
+})
+
 /** 启一个隔离实例：独立临时目录 + 真实 http.Server。 */
 async function startHost(config) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-e2e-'))
+  createdDirs.push(dir)
   const phrasesFile = path.join(dir, 'phrases.json')
   const viewFile = path.join(dir, 'view.json')
 

@@ -5,7 +5,7 @@
 //   2. delete 必须显式 confirm:true
 //   3. 写操作标记为不可并发
 
-import test from 'node:test'
+import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -15,9 +15,26 @@ import { fileURLToPath } from 'node:url'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const MOD = 'file://' + path.join(here, '..', 'src', 'agent-tools.js').replace(/\\/g, '/')
 
+/**
+ * 本文件每个用例都调 setup() 建临时目录，跑一次测试会建 25 个。
+ * 早期不清理，实测在系统 TEMP 累积到 1512 个 —— 测试自身的资源泄漏。
+ * 这里统一登记，结束时一次性删除。
+ */
+const createdDirs = []
+after(() => {
+  for (const dir of createdDirs) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true })
+    } catch (e) {
+      /* 清理失败不致命 */
+    }
+  }
+})
+
 /** 搭一个只记录注册的假 tools 服务，返回 { tools, call(name,args) } */
 async function setup() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-tool-'))
+  createdDirs.push(dir)
   const phrasesFile = path.join(dir, 'phrases.json')
   fs.writeFileSync(phrasesFile, JSON.stringify({ schemaVersion: 1, phrases: [] }), 'utf8')
 

@@ -2,7 +2,7 @@
 // 覆盖：占位符展开 / 存储原子写 / 损坏自愈 / schemaVersion 守卫 / 视图合并排序
 // 只测纯逻辑，不启动 DSH。
 
-import test from 'node:test'
+import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -22,9 +22,29 @@ import {
   SCHEMA_VERSION,
 } from '../src/store.js'
 
+/**
+ * 建临时目录，并登记进 createdDirs —— 测试结束时由 after() 统一清理。
+ *
+ * 为什么要登记：早期版本只 mkdtemp 不删除，跑一次测试就在系统 TEMP 里
+ * 留下十几个目录。实测累积到 1512 个（11/4~11/5 一天多），属于测试自身
+ * 的资源泄漏 —— 不是产品 bug，但同样要修，否则长跑 CI 会一直啃磁盘。
+ */
+const createdDirs = []
 function tmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'qs-test-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-test-'))
+  createdDirs.push(dir)
+  return dir
 }
+
+after(() => {
+  for (const dir of createdDirs) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true })
+    } catch (e) {
+      /* 清理失败不致命 */
+    }
+  }
+})
 
 // ---- expand ----
 
