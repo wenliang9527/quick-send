@@ -14,7 +14,7 @@ ZCode 会话侧栏「快捷发送」面板：常用语管理，一键复制到�
 - **v0.5.4：分类建议弃用原生 datalist**（webview 里弹层悬空压内容区）→ 输入框下方内联 chips（点击填入，主题配色一致）
 - **v0.5.5：agent 整理常用语**——新增 `bulk_add_snippets` 工具（一次调用批量写入：逐条校验、完全重复自动跳过、**整批一次原子写**，返回逐条结果）+ 斜杠命令 `/quick-send-organize` 固化五步纪律（查重→草稿→**等用户确认**→写入→汇报）。跨端对称：DSH 侧同期实现 quick_send_list/add/update 工具
 - **v0.5.6：面板手动刷新按钮**——头部新增 ⟳ 按钮：agent 侧改数据（bulk_add_snippets 等）没有 server→UI 推送通道（ext-apps 无该能力），面板原来只在打开时拉一次列表，点一下重拉全量（不做轮询）。**此版本已装机**（市场快照 685,207B + 11-04 exe）
-- **v0.5.7：装机后追加修复合辑（bump 触发重装，§6 SOP；内容曾误折进 0.5.6，因版本相同更新按钮不会触发）**——① `list_snippets`/`render_snippet` 改为 agent 可见（原 app-only，但 /quick-send、/quick-send-organize、bulk 描述三处流程都要求 agent 调它们——命令路径实际执行不了）；② save_snippet 更新时不带 pinned 保留现值（原来默认 false 会冲掉置顶）；③ 编辑抽屉 Esc 关闭 / Ctrl+Enter 保存、列表刷新后保持滚动位置；④ **默认数据路径不再写死作者机器目录**（CONTRACT 待办 1，对齐 DSH 0.2.2 修法）——不配置时跟随插件数据目录，要共享必须显式配置 `phrasesPath`；⑤ **并发加固（对齐 DSH 0.3.2 事故复盘）**——唯一 tmp 名（固定 tmp 名并发会 ENOENT）+ 数据目录级 lockfile 串行全部写操作（多会话多 exe 互不丢数据），ZCode↔DSH 跨进程 revision 机制立项为 CONTRACT 双侧待办
+- **v0.5.7：装机后追加修复合辑（bump 触发重装，§6 SOP；内容曾误折进 0.5.6，因版本相同更新按钮不会触发）**——① `list_snippets`/`render_snippet` 改为 agent 可见（原 app-only，但 /quick-send、/quick-send-organize、bulk 描述三处流程都要求 agent 调它们——命令路径实际执行不了）；② save_snippet 更新时不带 pinned 保留现值（原来默认 false 会冲掉置顶）；③ 编辑抽屉 Esc 关闭 / Ctrl+Enter 保存、列表刷新后保持滚动位置；④ **默认数据路径不再写死作者机器目录**（CONTRACT 待办 1，对齐 DSH 0.2.2 修法）——不配置时跟随插件数据目录，要共享必须显式配置 `phrasesPath`；⑤ **并发加固 + 与 DSH 0.3.4 跨进程闭环**——唯一 tmp 名（固定 tmp 名并发会 ENOENT）+ lockfile 串行全部写操作（多会话多 exe 互不丢数据），**锁移至 phrases.json 同目录**（0.5.6 放数据目录会与 DSH 各锁各的=没锁）；共享文件顶层 `revision` 双侧保留续增（DSH 0.3.4 同款 CAS，冲突整操作重放 ≤5 次），写回不再把 DSH 的 revision 无声抹掉
 
 ## 功能
 

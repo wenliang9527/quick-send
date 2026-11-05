@@ -82,18 +82,18 @@
    固定 `<file>.tmp` 是实测事故（DSH 0.3.2）：并发双方抢同一个 tmp，一方 rename 走后另一方
    ENOENT 崩溃、交错丢更新。失败时各自清理自己的 tmp。
 4. **损坏自愈**：解析失败 → 原文件改名 `<file>.bad`（留证）→ 空表启动，不丢旧数据证据。
-5. **并发**（分层处理，2026-11-05 定稿）：
+5. **并发**（分层处理，2026-11-05 定稿；同日 DSH 0.3.4 + ZCode 0.5.7 双侧闭环）：
    - **进程内**：必须串行——DSH 0.3.2 `mutatePhrases`/`mutateView` 队列；ZCode 单线程循环天然串行。
-   - **ZCode↔ZCode（多会话多 exe）**：数据目录级 lockfile（`quick-send.lock`，create_new 抢锁 +
-     25ms 重试至 5s + 持有者逾期 10s 崩溃残留抢占），ZCode v0.5.6 起实施。
-   - **ZCode↔DSH 跨进程**：**已由 DSH 侧实现（0.3.4）**，采用「文件锁 + revision」双保险：
-     - **主机制：跨进程文件锁**。锁文件与 ZCode 同名同目录（`<phrases.json 所在目录>/quick-send.lock`），
-       同样 `create_new` 抢锁、25ms 轮询、5s 超时、10s 逾期抢占。所以两侧配同一个
-       `phrases.json` 时天然互斥——**ZCode 侧不需要额外改动即可受益**。
-     - **辅助：revision 校验**。共享文件顶层 `revision: u64`，写者在锁内读 rev、写 rev+1；
-       写入前比对，发现变化即重读重放。这一层防的是「不守锁的写者」（老版本）。
-     - **schemaVersion 保持 1**（加法演进，缺字段按 0）。**DSH 全量写已同步保留 revision 字段**，
-       不会无声抹掉。
+   - **跨进程 lockfile（ZCode↔ZCode 与 ZCode↔DSH 共用同一把锁）**：`<phrases.json 所在目录>/quick-send.lock`，
+     create_new 抢锁 + 25ms 重试至 5s + 持有者逾期 10s 崩溃残留抢占。
+     **勘误（ZCode 0.5.7）**：ZCode 0.5.6 曾把锁放在自己的插件数据目录——与 DSH 各锁各的、
+     等于没锁（DSH 0.3.4 注释「两侧目录相同→天然互斥」的前提并不成立）；0.5.7 起移到
+     phrases.json 同目录，跨侧互斥才真正成立。装法 A（自包含）下 phrases 就在数据目录，行为不变。
+   - **辅助：revision 校验（双侧已实现）**。共享文件顶层 `revision: u64`，写者在锁内读 rev、
+     写 rev+1；落盘前与磁盘当前值比对，发现变化即整操作重读重放（DSH `CAS_RETRIES=5`；
+     ZCode 0.5.7 起同样实现，冲突重放 ≤5 次）。这一层防的是「不守锁的写者」（老版本）。
+     - **schemaVersion 保持 1**（加法演进，缺字段按 0）。**双侧全量写均已保留 revision 字段**
+       （DSH 0.3.4 起；ZCode 0.5.7 起——不保留会把对方的 CAS 无声打瞎）。
      - ⚠️ **实测教训：只靠 revision 不够**。4 进程 × 8 次并发写，仅用 revision CAS 仍稳定丢
        1 条（31/32）——check 与 write 之间的窗口无法消除。加文件锁后同一场景 5/5 轮均 32/32。
        契约原文「双侧实现前维持 last-write-wins」的乐观假设（毫秒级窗口撞不上）在批量写场景

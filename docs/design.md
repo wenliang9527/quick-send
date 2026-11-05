@@ -263,7 +263,7 @@ ZCode Desktop
 - **分类存为自由字符串**,不建独立实体:面板分类列表 = 去重派生;改名 = 工具一次性重写所有匹配项(server 提供 `rename_category`);避免两份数据不一致
 - **order 为组内相对序**:重排只交换相邻两项的 order,写入量最小
 - **原子写**:写 `snippets.json.tmp` → `fs.rename` 覆盖;读时 parse 失败 → 把原文件改名 `.bad` 留证,空数据启动(NFR-6)
-- **多会话并发**:多个 ZCode 会话各拉起一个 server(多进程)。首版口径 = 原子替换 + last-write-wins;**v0.5.6 升级 = 唯一 tmp 名 + 数据目录级 lockfile 串行全部写操作**(见 §16),ZCode↔ZCode 已闭环;ZCode↔DSH 跨进程维持 LWW,revision 双侧协议见 CONTRACT 写入纪律待办
+- **多会话并发**:多个 ZCode 会话各拉起一个 server(多进程)。**v0.5.7 = 唯一 tmp 名 + phrases.json 同目录 lockfile + revision CAS**(见 §16),ZCode↔ZCode 与 ZCode↔DSH(0.3.4 同款锁)均已闭环
 
 ---
 
@@ -512,6 +512,14 @@ DSH 侧 0.3.2(e433831)实测复现并发写丢数据并修了**其进程内**并
   (顶层 `revision: u64`,写者 +1,回退重读重试;schemaVersion 保持 1 加法演进)已立项为
   CONTRACT 写入纪律待办,需双侧实现方可生效
 - 单测:data_lock_released_and_stale_breakable(锁不残留/无 tmp 残留/逾期抢占),Rust 27→28
+
+**同日补记(DSH 0.3.4 联动,17b75ab)**:DSH 实现跨进程「文件锁+revision」闭环契约第5条,但其注释
+「两侧配同一 phrases.json 时目录相同→天然互斥」**前提不成立**——ZCode 0.5.6 的锁在插件数据目录,
+DSH 的锁在 phrases.json 目录,各锁各的=没锁;且 ZCode 的 SharedFile 无 revision 字段,全量写会把
+DSH 的 CAS 校验无声打瞎。0.5.7 对齐:①锁移至 phrases.json 同目录(与 DSH 同名同文件,装法 A 下
+行为不变);②SharedFile 增顶层 revision(缺省 0,每次全量写 +1),save_shared 落盘前 CAS 比对磁盘
+当前值,不一致报 conflict,with_data_lock 整操作重放 ≤5 次(重入即重读最新快照,天然防丢更新);
+单测 28→30(revision 续增不抹零/stomp 插队被拦且重放不丢数据)
 
 ---
 

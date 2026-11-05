@@ -44,6 +44,10 @@ pub struct Phrase {
 #[derive(Serialize, Deserialize)]
 struct SharedFile {
     schemaVersion: u32,
+    /// 顶层 revision（CONTRACT 写入纪律第5条,DSH 0.3.4 起双方共用）:每次全量写 +1。
+    /// 缺字段按 0（schemaVersion 保持 1,加法演进）;不保留会被 DSH 的 CAS 校验无声失效
+    #[serde(default)]
+    revision: u64,
     phrases: Vec<Phrase>,
 }
 
@@ -185,7 +189,8 @@ fn load_shared() -> SharedLoad {
             updatedAt: str_or_now(obj.get("updatedAt")),
         });
     }
-    SharedLoad::Ok(SharedFile { schemaVersion: 1, phrases })
+    let revision = root.get("revision").and_then(Value::as_u64).unwrap_or(0);
+    SharedLoad::Ok(SharedFile { schemaVersion: 1, revision, phrases })
 }
 
 /// 读文本并剥 UTF-8 BOM（DSH 侧容忍 BOM,契约外编辑器也可能写出带 BOM 的文件）
@@ -214,23 +219,40 @@ fn unique_tmp(path: &PathBuf) -> PathBuf {
     path.with_extension(format!("json.{}.tmp", new_id()))
 }
 
-fn save_shared(file: &SharedFile) -> Result<(), String> {
+fn save_shared(file: &mut SharedFile) -> Result<(), StoreError> {
     let path = phrases_path();
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
+    // CAS：落盘前核对磁盘上的当前 revision 与本快照一致。不一致 = 有不守锁的写者
+    // （旧版本 exe）在读取之后插过写 → 本快照已过期,报 conflict 由上层重放整操作,
+    // 避免把对方的新增抹掉（对齐 DSH 0.3.4 的 revision 校验语义）
+    let on_disk = current_revision_on_disk(&path);
+    if on_disk != file.revision {
+        return Err(("conflict", format!("共享文件已被并发修改（磁盘 rev {on_disk} ≠ 快照 rev {}）", file.revision)));
+    }
+    file.revision += 1;
     let tmp = unique_tmp(&path);
-    let body = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
-    fs::write(&tmp, body).map_err(|e| format!("共享文件写入失败: {e}"))?;
+    let body = serde_json::to_string_pretty(file).map_err(|e| ("validation", e.to_string()))?;
+    fs::write(&tmp, body).map_err(|e| ("validation", format!("共享文件写入失败: {e}")))?;
     if let Err(e) = fs::rename(&tmp, &path) {
         let _ = fs::remove_file(&tmp); // 清理自己的 tmp,不碍他人
-        return Err(format!("共享文件替换失败: {e}"));
+        return Err(("validation", format!("共享文件替换失败: {e}")));
     }
     Ok(())
 }
 
+/// 只读文件顶层的 revision（缺文件/空文件/缺字段 = 0,对齐 DSH readRevisionOnly）
+fn current_revision_on_disk(path: &PathBuf) -> u64 {
+    read_text_bom(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v.get("revision").and_then(Value::as_u64))
+        .unwrap_or(0)
+}
+
 fn empty_shared() -> SharedFile {
-    SharedFile { schemaVersion: 1, phrases: Vec::new() }
+    SharedFile { schemaVersion: 1, revision: 0, phrases: Vec::new() }
 }
 
 // ── 视图层 ──
@@ -320,7 +342,14 @@ const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 const LOCK_STALE: Duration = Duration::from_secs(10);
 
 fn lock_path() -> PathBuf {
-    data_dir().join("quick-send.lock")
+    // 锁必须与 DSH 0.3.4 同名**同目录**:DSH 把锁放 phrases.json 所在目录(它只知该路径),
+    // ZCode 若把锁放数据目录则各锁各的=没锁(共享场景下两个目录必然不同)。
+    // 装法 A(自包含)下 phrases 就在数据目录,行为不变
+    let p = phrases_path();
+    match p.parent() {
+        Some(dir) => dir.join("quick-send.lock"),
+        None => data_dir().join("quick-send.lock"),
+    }
 }
 
 /// create_new 抢锁;被占则 25ms 重试至超时;锁文件逾期(持有者崩溃残留)直接抢占。
@@ -366,10 +395,20 @@ impl Drop for LockGuard {
     }
 }
 
-fn with_data_lock<T>(f: impl FnOnce() -> Result<T, StoreError>) -> Result<T, StoreError> {
+/// 冲突(有不守锁的写者插队)时整操作重放:内层函数重入即重新加载最新快照,≤5 次。
+/// 前提:mutate 类操作必须可重放(save/delete/bulk/rename 天然幂等可重入——它们基于
+/// 重新读到的快照重新计算,不在闭包外携带状态)
+fn with_data_lock<T>(mut f: impl FnMut() -> Result<T, StoreError>) -> Result<T, StoreError> {
     acquire_data_lock()?;
     let _guard = LockGuard;
-    f()
+    const MAX_REPLAYS: usize = 5;
+    let mut out = f();
+    let mut replays = 0;
+    while matches!(&out, Err(("conflict", _))) && replays < MAX_REPLAYS {
+        replays += 1;
+        out = f();
+    }
+    out
 }
 
 // ── 对外操作 ──
@@ -468,7 +507,7 @@ fn save_snippet_inner(input: &Value) -> Result<Vec<Snippet>, StoreError> {
         let pinned = pinned_input.unwrap_or_else(|| prev_pinned.unwrap_or(false));
         view.insert(target_id.clone(), ViewEntry { pinned, order });
     }
-    save_shared(&shared).map_err(|e| ("validation", e))?;
+    save_shared(&mut shared)?;
     save_view(&view);
     Ok(synth(&shared.phrases, &view))
 }
@@ -522,7 +561,7 @@ fn bulk_add_snippets_inner(input: &Value) -> Result<Value, StoreError> {
         added += 1;
     }
     if added > 0 {
-        save_shared(&shared).map_err(|e| ("validation", e))?;
+        save_shared(&mut shared)?;
     }
     Ok(json!({
         "added": added,
@@ -545,7 +584,7 @@ fn delete_snippet_inner(id: &str) -> Result<Vec<Snippet>, StoreError> {
     }
     let mut view = load_view();
     view.remove(id); // 孤儿条目"读时忽略";自己删的顺手清掉
-    save_shared(&shared).map_err(|e| ("validation", e))?;
+    save_shared(&mut shared)?;
     save_view(&view);
     Ok(synth(&shared.phrases, &view))
 }
@@ -605,7 +644,7 @@ fn rename_category_inner(from: &str, to: &str) -> Result<(usize, Vec<Snippet>), 
         }
     }
     if changed > 0 {
-        save_shared(&shared).map_err(|e| ("validation", e))?;
+        save_shared(&mut shared)?;
     }
     Ok((changed, synth(&shared.phrases, &load_view())))
 }
@@ -662,7 +701,7 @@ fn migrate_once_inner() {
         view.insert(s.id, ViewEntry { pinned: s.pinned, order: s.order });
         merged += 1;
     }
-    if let Err(e) = save_shared(&shared) {
+    if let Err((_, e)) = save_shared(&mut shared) {
         eprintln!("[quick-send] 迁移失败：{e}（旧文件保留,下次启动重试）");
         return;
     }
@@ -898,26 +937,79 @@ mod tests {
 
     #[test]
     fn data_lock_released_and_stale_breakable() {
-        // 写操作后锁不残留、无 *.tmp 残留(唯一 tmp 纪律)、逾期残留锁可抢占
+        // 写操作后锁不残留、无 *.tmp 残留(唯一 tmp 纪律)、逾期残留锁可抢占。
+        // 锁与 DSH 0.3.4 同名同目录:phrases.json 旁的 quick-send.lock
         let (_g, dir) = isolated();
+        let lock = shared_path(&dir).parent().unwrap().join("quick-send.lock");
         save_snippet(&json!({"title":"a","body":"b"})).unwrap();
-        assert!(!dir.join("quick-send.lock").exists(), "锁用完必须释放");
-        let leftovers: Vec<String> = fs::read_dir(&dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .map(|e| e.file_name().to_string_lossy().into_owned())
+        assert!(!lock.exists(), "锁用完必须释放");
+        let leftovers: Vec<String> = [dir.clone(), dir.join("shared")]
+            .iter()
+            .flat_map(|d| {
+                fs::read_dir(d)
+                    .unwrap()
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+            })
             .filter(|n| n.ends_with(".tmp"))
             .collect();
         assert!(leftovers.is_empty(), "tmp 残留: {leftovers:?}");
         // 模拟持有者崩溃残留的锁(把 mtime 拨回 30s 前):写操作抢占成功
-        let lp = dir.join("quick-send.lock");
-        fs::write(&lp, b"x").unwrap();
-        let f = fs::OpenOptions::new().write(true).open(&lp).unwrap();
+        fs::write(&lock, b"x").unwrap();
+        let f = fs::OpenOptions::new().write(true).open(&lock).unwrap();
         f.set_times(fs::FileTimes::new().set_modified(SystemTime::now() - Duration::from_secs(30)))
             .unwrap();
         drop(f);
         save_snippet(&json!({"title":"c","body":"d"})).unwrap();
-        assert!(!lp.exists());
+        assert!(!lock.exists());
+    }
+
+    #[test]
+    fn revision_increments_and_continues_external_value() {
+        // CONTRACT 写入纪律5:本侧全量写 revision+1;DSH 已写的 revision 被保留续增,不得抹零
+        let (_g, dir) = isolated();
+        save_snippet(&json!({"title":"a","body":"b"})).unwrap();
+        let raw: Value = serde_json::from_str(&fs::read_to_string(shared_path(&dir)).unwrap()).unwrap();
+        assert_eq!(raw["revision"], 1);
+        let dsh = json!({
+            "schemaVersion": 1, "revision": 7,
+            "phrases": [{ "id": "dsh-r1", "title": "DSH条", "text": "t", "category": "", "createdAt": "2026-11-05T00:00:00.000Z", "updatedAt": "2026-11-05T00:00:00.000Z" }]
+        });
+        fs::write(shared_path(&dir), serde_json::to_string_pretty(&dsh).unwrap()).unwrap();
+        save_snippet(&json!({"id":"dsh-r1","title":"DSH条改","body":"t2"})).unwrap();
+        let raw: Value = serde_json::from_str(&fs::read_to_string(shared_path(&dir)).unwrap()).unwrap();
+        assert_eq!(raw["revision"], 8, "外部 revision 保留并续增");
+    }
+
+    #[test]
+    fn stomp_detected_and_replayed_without_loss() {
+        // 不守锁的写者(旧版 exe)在读取后插队:save_shared CAS 报 conflict;
+        // 公开接口经 with_data_lock 重放成功,插队者的新增不被抹掉
+        let (_g, dir) = isolated();
+        save_snippet(&json!({"title":"a","body":"b"})).unwrap(); // rev 1
+        let SharedLoad::Ok(mut stale) = load_shared() else {
+            panic!("load failed");
+        };
+        // 模拟插队:磁盘变成 rev 2 且多了一条 intruder
+        let intruder = json!({
+            "schemaVersion": 1, "revision": 2,
+            "phrases": [
+                { "id": "a", "title": "a", "text": "b", "category": "", "createdAt": "2026-11-05T00:00:00.000Z", "updatedAt": "2026-11-05T00:00:00.000Z" },
+                { "id": "intruder", "title": "插队者", "text": "x", "category": "", "createdAt": "2026-11-05T00:00:01.000Z", "updatedAt": "2026-11-05T00:00:01.000Z" }
+            ]
+        });
+        fs::write(shared_path(&dir), serde_json::to_string_pretty(&intruder).unwrap()).unwrap();
+        let err = save_shared(&mut stale).unwrap_err();
+        assert_eq!(err.0, "conflict", "旧快照落盘必须被 CAS 拦下");
+        // 公开接口:重放后成功,且基于最新快照(含 intruder)写入
+        save_snippet(&json!({"title":"c","body":"d"})).unwrap();
+        let list = list_snippets();
+        let titles: Vec<&str> = list.iter().map(|s| s.title.as_str()).collect();
+        assert!(titles.contains(&"插队者"), "插队者不得被抹掉: {titles:?}");
+        assert!(titles.contains(&"c"));
+        let raw: Value = serde_json::from_str(&fs::read_to_string(shared_path(&dir)).unwrap()).unwrap();
+        assert_eq!(raw["revision"], 3);
     }
 
     #[test]
