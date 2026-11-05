@@ -74,10 +74,19 @@
 
 1. **双向写**，谁都能增删改。
 2. **全量读改写**：不基于内存缓存做增量 patch。
-3. **原子替换**：写 `<file>.tmp` → `fs.rename` / `std::fs::rename` 覆盖目标。
+3. **原子替换**：写**唯一**临时文件（`<file>.<pid>.<序号>.<随机>.tmp`）→ rename 覆盖目标。
+   固定 `<file>.tmp` 是实测事故（DSH 0.3.2）：并发双方抢同一个 tmp，一方 rename 走后另一方
+   ENOENT 崩溃、交错丢更新。失败时各自清理自己的 tmp。
 4. **损坏自愈**：解析失败 → 原文件改名 `<file>.bad`（留证）→ 空表启动，不丢旧数据证据。
-5. **并发**：单用户跨两窗口手点，毫秒级窗口物理上撞不上；last-write-wins 可接受。不做文件锁。
-   「低频 Agent 写入」同理成立。
+5. **并发**（分层处理，2026-11-05 定稿）：
+   - **进程内**：必须串行——DSH 0.3.2 `mutatePhrases`/`mutateView` 队列；ZCode 单线程循环天然串行。
+   - **ZCode↔ZCode（多会话多 exe）**：数据目录级 lockfile（`quick-send.lock`，create_new 抢锁 +
+     25ms 重试至 5s + 持有者逾期 10s 崩溃残留抢占），ZCode v0.5.6 起实施。
+   - **ZCode↔DSH 跨进程**：**待办——revision 机制**（已知边界，DSH 0.3.2 store.js 注释同记）：
+     共享文件加顶层 `revision: u64`，写者持锁期间读 rev、写 rev+1，发现回退即重读重试。
+     schemaVersion 保持 1（加法演进，缺字段按 0）；DSH 全量写须同步保留该字段，否则字段会被
+     无声抹掉、机制失效。双侧实现前维持 last-write-wins——单用户手点毫秒级窗口物理撞不上，
+     剩余风险仅「Agent 批量写」与对面面板点击同时发生。
 
 ## Agent 写入（双方共同约定）
 

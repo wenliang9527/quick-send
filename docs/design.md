@@ -263,7 +263,7 @@ ZCode Desktop
 - **分类存为自由字符串**,不建独立实体:面板分类列表 = 去重派生;改名 = 工具一次性重写所有匹配项(server 提供 `rename_category`);避免两份数据不一致
 - **order 为组内相对序**:重排只交换相邻两项的 order,写入量最小
 - **原子写**:写 `snippets.json.tmp` → `fs.rename` 覆盖;读时 parse 失败 → 把原文件改名 `.bad` 留证,空数据启动(NFR-6)
-- **多会话并发**:多个 ZCode 会话可能各拉起一个 server。写路径短(毫秒级)+ 原子替换,last-write-wins;不做文件锁(复杂度不值,风险见 §10)
+- **多会话并发**:多个 ZCode 会话各拉起一个 server(多进程)。首版口径 = 原子替换 + last-write-wins;**v0.5.6 升级 = 唯一 tmp 名 + 数据目录级 lockfile 串行全部写操作**(见 §16),ZCode↔ZCode 已闭环;ZCode↔DSH 跨进程维持 LWW,revision 双侧协议见 CONTRACT 写入纪律待办
 
 ---
 
@@ -496,6 +496,22 @@ jitless 无效),SDK 仅 ~13MB,业务代码近乎免费 → **在 Node 内无优�
 
 测试矩阵(v0.5.0):Rust 单元 19(新增严格形状/外部互写/版本守卫/虚拟序固化/合并迁移)
 + i18n 3 + 并发 1 + 冒烟 33,全过。
+
+## 16. 并发加固(v0.5.6,2026-11-05)
+
+DSH 侧 0.3.2(e433831)实测复现并发写丢数据并修了**其进程内**并发(mutate 队列);其 store.js
+注释明确「跨进程仍需 revision 机制,属 CONTRACT 已知边界」。ZCode 侧存在同类 bug,本轮跟进:
+
+- **唯一 tmp 名**:save_shared/save_view 原用固定 `json.tmp`——多会话(多 exe)并发时双方抢同一
+  tmp,一方 rename 走后另一方 ENOENT(save_shared 返错)。改为 `<file>.<new_id()>.tmp`,
+  rename 失败自清理。写入纪律(CONTRACT §写入纪律 3)同步改口径
+- **跨进程 lockfile**:数据目录级单锁 `quick-send.lock`(create_new 抢锁 + 25ms 重试至 5s +
+  持有者逾期 10s 崩溃残留抢占;Drop 保证释放)。save/bulk/delete/reorder/rename/migrate
+  全部经锁;读路径不加锁(原子替换保证读到完整旧或新)。单锁免锁序,无死锁面
+- **边界**:ZCode↔ZCode 已闭环;**ZCode↔DSH 仍 LWW**(DSH 未持同一把锁)——revision 机制
+  (顶层 `revision: u64`,写者 +1,回退重读重试;schemaVersion 保持 1 加法演进)已立项为
+  CONTRACT 写入纪律待办,需双侧实现方可生效
+- 单测:data_lock_released_and_stale_breakable(锁不残留/无 tmp 残留/逾期抢占),Rust 27→28
 
 ---
 

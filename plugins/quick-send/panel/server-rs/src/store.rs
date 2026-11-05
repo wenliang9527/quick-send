@@ -12,9 +12,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::fs;
+use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// 上限口径对齐 DSH 侧（HANDOFF-DSH §5：120/20000/20 **字符**）。DSH 超限截断、本侧超限拒绝——
 /// 共同上界一致，任一侧存下的数据另一侧都能原样读/改，不会出现"存得进、改不动"。
@@ -207,15 +208,25 @@ fn quarantine(path: &PathBuf) {
     let _ = fs::rename(path, path.with_extension(format!("json.bad-{ts}")));
 }
 
+/// 唯一临时名:固定 `<file>.tmp` 会让并发写双方抢同一个 tmp(DSH 0.3.2 实测:一方 rename
+/// 走后另一方 ENOENT 崩溃、交错丢更新),ZCode 侧同为多进程(每会话一份 exe),必须唯一
+fn unique_tmp(path: &PathBuf) -> PathBuf {
+    path.with_extension(format!("json.{}.tmp", new_id()))
+}
+
 fn save_shared(file: &SharedFile) -> Result<(), String> {
     let path = phrases_path();
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let tmp = path.with_extension("json.tmp");
+    let tmp = unique_tmp(&path);
     let body = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
     fs::write(&tmp, body).map_err(|e| format!("共享文件写入失败: {e}"))?;
-    fs::rename(&tmp, &path).map_err(|e| format!("共享文件替换失败: {e}"))
+    if let Err(e) = fs::rename(&tmp, &path) {
+        let _ = fs::remove_file(&tmp); // 清理自己的 tmp,不碍他人
+        return Err(format!("共享文件替换失败: {e}"));
+    }
+    Ok(())
 }
 
 fn empty_shared() -> SharedFile {
@@ -244,10 +255,12 @@ fn save_view(view: &View) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let tmp = path.with_extension("json.tmp");
+    let tmp = unique_tmp(&path);
     if let Ok(body) = serde_json::to_string_pretty(view) {
         if fs::write(&tmp, body).is_ok() {
-            let _ = fs::rename(&tmp, &path);
+            if fs::rename(&tmp, &path).is_err() {
+                let _ = fs::remove_file(&tmp);
+            }
         }
     }
 }
@@ -297,6 +310,68 @@ fn sorted(list: &mut [Snippet]) {
     });
 }
 
+// ── 跨进程写锁（数据目录级单锁）──
+// 每会话一份 exe:两个 ZCode 会话并发写同一份共享/视图文件时,唯一 tmp 只防崩溃,
+// 读改写交错仍会丢更新。数据目录级单锁把本机 ZCode 侧全部写操作串行化——操作毫秒级,
+// 竞争可忽略;单锁免锁序,无死锁面。DSH 0.3.2 只做了其进程内串行(mutate 队列),
+// ZCode↔DSH 跨进程仍是 LWW,revision 双侧协议见 CONTRACT 写入纪律待办。
+
+const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+const LOCK_STALE: Duration = Duration::from_secs(10);
+
+fn lock_path() -> PathBuf {
+    data_dir().join("quick-send.lock")
+}
+
+/// create_new 抢锁;被占则 25ms 重试至超时;锁文件逾期(持有者崩溃残留)直接抢占。
+/// 锁以"文件存在"为据,创建后句柄即弃,删除即释放。
+fn acquire_data_lock_with(timeout: Duration, stale: Duration) -> Result<(), StoreError> {
+    let path = lock_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let deadline = Instant::now() + timeout;
+    loop {
+        match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(_) => return Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                let is_stale = fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|m| m.elapsed().ok())
+                    .map(|age| age > stale)
+                    .unwrap_or(false);
+                if is_stale {
+                    let _ = fs::remove_file(&path);
+                    continue;
+                }
+                if Instant::now() >= deadline {
+                    return Err(("lock", "获取数据锁超时:其他会话正在写入或锁残留".into()));
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(e) => return Err(("validation", format!("创建锁文件失败: {e}"))),
+        }
+    }
+}
+
+fn acquire_data_lock() -> Result<(), StoreError> {
+    acquire_data_lock_with(LOCK_TIMEOUT, LOCK_STALE)
+}
+
+struct LockGuard;
+impl Drop for LockGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(lock_path());
+    }
+}
+
+fn with_data_lock<T>(f: impl FnOnce() -> Result<T, StoreError>) -> Result<T, StoreError> {
+    acquire_data_lock()?;
+    let _guard = LockGuard;
+    f()
+}
+
 // ── 对外操作 ──
 
 pub type StoreError = (&'static str, String);
@@ -341,6 +416,10 @@ fn validate_phrase(title: &str, text: &str, category: &str) -> Result<(), String
 }
 
 pub fn save_snippet(input: &Value) -> Result<Vec<Snippet>, StoreError> {
+    with_data_lock(|| save_snippet_inner(input))
+}
+
+fn save_snippet_inner(input: &Value) -> Result<Vec<Snippet>, StoreError> {
     let mut shared = shared_or_err()?;
     let obj = input.as_object().ok_or(("validation", "参数必须是对象".into()))?;
 
@@ -398,6 +477,10 @@ pub fn save_snippet(input: &Value) -> Result<Vec<Snippet>, StoreError> {
 /// **整批一次原子写**（不是 N 次读改写）。任一条失败不影响其他条。
 /// 返回 {added, skippedDuplicates, failed:[{index,title,error}], snippets:更新后全量}。
 pub fn bulk_add_snippets(input: &Value) -> Result<Value, StoreError> {
+    with_data_lock(|| bulk_add_snippets_inner(input))
+}
+
+fn bulk_add_snippets_inner(input: &Value) -> Result<Value, StoreError> {
     let items = input
         .get("phrases")
         .and_then(Value::as_array)
@@ -450,6 +533,10 @@ pub fn bulk_add_snippets(input: &Value) -> Result<Value, StoreError> {
 }
 
 pub fn delete_snippet(id: &str) -> Result<Vec<Snippet>, StoreError> {
+    with_data_lock(|| delete_snippet_inner(id))
+}
+
+fn delete_snippet_inner(id: &str) -> Result<Vec<Snippet>, StoreError> {
     let mut shared = shared_or_err()?;
     let before = shared.phrases.len();
     shared.phrases.retain(|p| p.id != id);
@@ -473,6 +560,10 @@ fn segment_key(s: &Snippet) -> String {
 
 /// 段内相邻交换;只动本地 view（order 互换,虚拟序在此固化）,共享文件不动
 pub fn reorder_snippet(id: &str, direction: &str) -> Result<Vec<Snippet>, StoreError> {
+    with_data_lock(|| reorder_snippet_inner(id, direction))
+}
+
+fn reorder_snippet_inner(id: &str, direction: &str) -> Result<Vec<Snippet>, StoreError> {
     let shared = shared_or_err()?;
     let mut view = load_view();
     let mut seq = synth(&shared.phrases, &view);
@@ -499,6 +590,10 @@ pub fn reorder_snippet(id: &str, direction: &str) -> Result<Vec<Snippet>, StoreE
 }
 
 pub fn rename_category(from: &str, to: &str) -> Result<(usize, Vec<Snippet>), StoreError> {
+    with_data_lock(|| rename_category_inner(from, to))
+}
+
+fn rename_category_inner(from: &str, to: &str) -> Result<(usize, Vec<Snippet>), StoreError> {
     let mut shared = shared_or_err()?;
     let mut changed = 0usize;
     let now = now_iso();
@@ -520,6 +615,15 @@ pub fn rename_category(from: &str, to: &str) -> Result<(usize, Vec<Snippet>), St
 /// 旧 snippets.json **合并**进共享文件（同 id 以共享侧为准）,视图落本地 view.json,
 /// 旧文件改名 .migrated 留证。best-effort:任何失败只记日志不阻塞启动。
 pub fn migrate_once() {
+    // 拿不到锁 = 另一会话正在迁移;迁移幂等,跳过即可
+    if acquire_data_lock().is_err() {
+        return;
+    }
+    let _guard = LockGuard;
+    migrate_once_inner();
+}
+
+fn migrate_once_inner() {
     let legacy = legacy_path();
     let Ok(text) = read_text_bom(&legacy) else {
         return; // 无旧文件（全新安装）
@@ -790,6 +894,30 @@ mod tests {
         assert_eq!(r["added"], 0);
         assert_eq!(r["failed"].as_array().unwrap().len(), 2);
         assert_eq!(list_snippets().len(), MAX_SNIPPETS);
+    }
+
+    #[test]
+    fn data_lock_released_and_stale_breakable() {
+        // 写操作后锁不残留、无 *.tmp 残留(唯一 tmp 纪律)、逾期残留锁可抢占
+        let (_g, dir) = isolated();
+        save_snippet(&json!({"title":"a","body":"b"})).unwrap();
+        assert!(!dir.join("quick-send.lock").exists(), "锁用完必须释放");
+        let leftovers: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "tmp 残留: {leftovers:?}");
+        // 模拟持有者崩溃残留的锁(把 mtime 拨回 30s 前):写操作抢占成功
+        let lp = dir.join("quick-send.lock");
+        fs::write(&lp, b"x").unwrap();
+        let f = fs::OpenOptions::new().write(true).open(&lp).unwrap();
+        f.set_times(fs::FileTimes::new().set_modified(SystemTime::now() - Duration::from_secs(30)))
+            .unwrap();
+        drop(f);
+        save_snippet(&json!({"title":"c","body":"d"})).unwrap();
+        assert!(!lp.exists());
     }
 
     #[test]
