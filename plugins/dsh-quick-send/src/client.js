@@ -208,7 +208,181 @@ window.__ModuleLoader__.load({
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(args || {}),
+      }).then(function (out) {
+        // 写操作后让斜杠命令的候选缓存失效，避免「刚存的条目 /q 里看不到」
+        slashCache.at = 0
+        return out
       })
+    }
+
+    // ---- 斜杠命令 /quick-send（别名 /qs）--------------------------------------
+    //
+    // 契约来源：@deepseek-ai/dsh-client-ui-input-trigger 的 InputTriggerSource。
+    //   candidates(session, req) → 候选列表；onPick(pick) → { text } 用字面文本
+    //   替换「触发词 span」。这正是我们要的语义：插入，不发送。
+    //
+    // 刻意**不**把 'inputTriggers' 写进 exports.inject：
+    //   inject 里的服务缺失会让整个 Client 半区不加载——那会连带毁掉浮层与管理页。
+    //   这里改为能力探测，拿不到就静默跳过，旧版 DSH 上的原有功能完全不受影响。
+
+    var SLASH_SOURCE = 'quick-send' // 同时是菜单分组名（宿主按 name 分组）
+    var SLASH_ALIAS = 'qs'
+    var SLASH_TTL_MS = 8000
+    var SLASH_MAX = 30
+
+    // at=0 表示「还没读过」，首次必然拉取
+    var slashCache = { at: 0, rows: [] }
+    var slashPending = null
+
+    /** 候选检索串：标题 + 分类 + 正文，全部小写。 */
+    function slashHaystack(p) {
+      return ((p.title || '') + ' ' + (p.category || '') + ' ' + (p.text || '')).toLowerCase()
+    }
+
+    /** 正文压成单行预览（候选描述只放得下一行）。 */
+    function slashOneLine(text) {
+      return String(text || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+    }
+
+    /**
+     * 从 query 里剥出关键字。
+     *   null  → 不归我们管（不出候选，别抢菜单）
+     *   ''    → 全量
+     *   其它   → 关键字
+     *
+     * 裸 `/` 与 `/` + 无关字一律 null：否则一敲斜杠就被常用语列表挤满菜单。
+     * 边打边试的中间态（`/q`、`/quick`）按「正在打名字」处理，返回全量——
+     * 否则用户必须一字不差打完才看得到东西。
+     */
+    function slashKeyword(query) {
+      var q = String(query || '').trim()
+      if (q === '') return null
+      var lower = q.toLowerCase()
+      if (lower === SLASH_SOURCE || lower === SLASH_ALIAS) return ''
+      if (SLASH_SOURCE.indexOf(lower) === 0 || SLASH_ALIAS.indexOf(lower) === 0) return ''
+      if (lower.indexOf(SLASH_SOURCE) === 0) return q.slice(SLASH_SOURCE.length).trim()
+      if (lower.indexOf(SLASH_ALIAS) === 0) return q.slice(SLASH_ALIAS.length).trim()
+      return null
+    }
+
+    /** 拉全量（带 TTL 与单飞，避免每敲一个字都打一次 HTTP）。 */
+    function slashRows() {
+      if (Date.now() - slashCache.at < SLASH_TTL_MS) return Promise.resolve(slashCache.rows)
+      if (slashPending !== null) return slashPending
+      slashPending = apiList()
+        .then(function (snap) {
+          var rows = snap && Array.isArray(snap.phrases) ? snap.phrases : []
+          slashCache = { at: Date.now(), rows: rows }
+          slashPending = null
+          return rows
+        })
+        .catch(function () {
+          // 拉取失败：沿用旧缓存，不弹错（斜杠命令不该成为报错入口）
+          slashPending = null
+          return slashCache.rows
+        })
+      return slashPending
+    }
+
+    function slashCandidates(query, signal) {
+      if (signal && signal.aborted) return Promise.resolve([])
+      var kw = slashKeyword(query)
+      if (kw === null) return Promise.resolve([])
+      return slashRows().then(function (rows) {
+        if (signal && signal.aborted) return []
+        var needle = kw.toLowerCase()
+        var list = needle === ''
+          ? rows
+          : rows.filter(function (p) {
+              return slashHaystack(p).indexOf(needle) >= 0
+            })
+        return list.slice(0, SLASH_MAX).map(function (p) {
+          var desc = slashOneLine(p.text)
+          if (p.category) desc = '[' + p.category + '] ' + desc
+          return {
+            name: p.title || slashOneLine(p.text).slice(0, 18) || p.id,
+            description: desc.slice(0, 60),
+            // 附带 id：onPick 靠它回查正文。宿主把 candidate 原对象透传给 onPick
+            // （dsh-prompt 用同样的手段带 templateId），name 可能重名故不能用 name 定位。
+            phraseId: p.id,
+          }
+        })
+      })
+    }
+
+    function slashPick(pick) {
+      var id = pick && pick.candidate ? pick.candidate.phraseId : null
+      if (!id) return undefined
+      var rows = slashCache.rows
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i].id === id) {
+          // 与浮层/管理页一致：占位符在**插入时**展开
+          return { text: expandText(rows[i].text || '') }
+        }
+      }
+      return undefined
+    }
+
+    /**
+     * 注册 /quick-send 斜杠命令。
+     * @returns {boolean} 是否注册成功（供日志与测试断言）
+     */
+    function registerSlashSource(ctx) {
+      var svc
+      // rc.5 契约：未声明进 inject 的服务，ctx.get(name) 与 ctx.<name> 都直接抛错
+      // （cordis reflect: cannot get property "x" without inject），不会返回 undefined；
+      // 而 inject 全为必需语义，声明了宿主没有的服务会让 entry 永远 pending（boot 直接失败）。
+      // 所以：首选 ctx.reflect.get()（rc.5 提供的免 inject 读取口，未提供返回 undefined），
+      // 旧宿主再退回两处包了 try/catch 的探测，全部失败 → 能力探测降级（slash: off）。
+      try {
+        if (ctx.reflect && typeof ctx.reflect.get === 'function') {
+          svc = ctx.reflect.get('inputTriggers', true)
+        }
+      } catch (e) {
+        svc = undefined
+      }
+      if (svc === undefined || svc === null) {
+        try {
+          svc = typeof ctx.get === 'function' ? ctx.get('inputTriggers') : undefined
+        } catch (e) {
+          svc = undefined
+        }
+      }
+      if (svc === undefined || svc === null) {
+        try {
+          svc = ctx.inputTriggers
+        } catch (e) {
+          svc = undefined
+        }
+      }
+      if (!svc || typeof svc.registerSource !== 'function') {
+        console.log(
+          '[quick-send] 宿主无 inputTriggers 服务，/quick-send 斜杠命令未注册（浮层与管理页不受影响）',
+        )
+        return false
+      }
+      ctx.effect(function () {
+        try {
+          return svc.registerSource({
+            trigger: '/',
+            name: SLASH_SOURCE,
+            order: 6, // 排在宿主内置 /goal 等之后，不与 command/skill 组抢首位
+            candidates: function (_session, req) {
+              return slashCandidates(req && req.query, req && req.signal)
+            },
+            onPick: slashPick,
+          })
+        } catch (e) {
+          // 宿主契约：registerSource 遇 (trigger, name) 重复直接 throw（dsh-client-ui-input-trigger
+          // lib/client.js）。若 profile 里残留第二份链接导致本插件被激活两次，第二个实例走到这里——
+          // 降级为「已注册」，不让整个 Client 半区激活失败拖垮 web boot（浮层与管理页不受影响）。
+          if (e && /already registered/.test(String(e && e.message))) return function () {}
+          throw e
+        }
+      })
+      return true
     }
 
     // ---- 占位符展开（与 Host 侧 expand.js 同一语义） ---------------------------
@@ -1290,6 +1464,17 @@ window.__ModuleLoader__.load({
     // ---- apply --------------------------------------------------------------
 
     function apply(ctx, config) {
+      try {
+        return applyInner(ctx, config)
+      } catch (e) {
+        // apply 抛错会被宿主框架吞成「entry failed」且不进 crash log；这里补一条
+        // error 级 console（crash log 会原样收录），保留异常细节再原样抛出。
+        console.error('[quick-send] apply failed: ' + (e && e.stack ? e.stack : String(e)))
+        throw e
+      }
+    }
+
+    function applyInner(ctx, config) {
       var slots = ctx.slots
       if (slots === undefined) return
 
@@ -1356,7 +1541,12 @@ window.__ModuleLoader__.load({
         return slots.register({ name: 'main', key: PANEL_ID }, ManagePage)
       })
 
-      console.log('[quick-send] client ready (panel slot: ' + panelSlot + ')')
+      // 斜杠命令 /quick-send（能力探测，宿主不支持时静默跳过）
+      var slashOk = registerSlashSource(ctx)
+
+      console.log(
+        '[quick-send] client ready (panel slot: ' + panelSlot + ', slash: ' + (slashOk ? '/quick-send' : 'off') + ')',
+      )
 
       // 仅作提示：配置文件里要求 dock 但落到了 overlay 时（config 未传进 client），
       // 提示用户去 panelSlot 生效路径检查。不触发重挂，避免破坏已注册的槽位。

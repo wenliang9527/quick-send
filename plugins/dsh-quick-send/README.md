@@ -1,4 +1,4 @@
-# dsh-quick-send
+﻿# dsh-quick-send
 
 [![npm version](https://img.shields.io/npm/v/@wenliang9527/dsh-quick-send.svg)](https://www.npmjs.com/package/@wenliang9527/dsh-quick-send)
 [![license](https://img.shields.io/npm/l/@wenliang9527/dsh-quick-send.svg)](https://github.com/wenliang9527/quick-send/blob/master/LICENSE)
@@ -6,6 +6,10 @@
 
 DSH 常用语快捷发送插件 —— **浮层一键插到光标处**（不覆盖、不自动发送），
 **侧边栏管理页**负责增删改、排序与导入导出。两个界面各管一件事。
+
+> **别装错**：本插件是 `@wenliang9527/dsh-quick-send`（**带 scope**）。
+> npm 上另有一个无 scope 的 `dsh-quick-send`（作者 `1250589385`），名字相同但**不是本项目**——
+> 它点一下**直接发送**，而本插件**只插入到光标处、绝不自动发送**。安装时请认准带 `@wenliang9527/` 前缀的全名。
 
 装完即用，数据默认存在 `~/.dsh/quick-send/phrases.json`，**不需要建任何文件夹**。
 若想与 ZCode 的 `quick-send` 插件共用同一份常用语，配置一下 `phrasesFile` 指向同一个文件即可
@@ -40,6 +44,7 @@ DSH 常用语快捷发送插件 —— **浮层一键插到光标处**（不覆�
 ## 功能
 
 - **两个入口**：输入框工具行 **📚** 按钮开浮层（**不占布局、不挤压输入框**）；侧边栏 **📚** 图标开管理页
+- **第三个入口：斜杠命令**：输入框里敲 `/quick-send`（或 `/qs`）直接筛选并插入，不用点按钮（见下）
 - **插入到光标处**：一次可撤销的编辑（`Ctrl+Z` 能撤销），不是覆盖草稿
 - **数字键直插**：浮层里搜索框为空时，按 `1`-`9` 直接插入第 N 条（搜索框有内容时不抢键）
 - **管理**：新建 / 编辑 / 删除（二次确认）/ 搜索 / 分类筛选 / 置顶 / 上下移动
@@ -188,6 +193,35 @@ AI 归纳只会**存进常用语库**，不会自动发送。你仍需在面板�
 用 fetch 打这些端点」，0.3.2 起加了同源校验：浏览器发起的请求若带 `Origin`
 且其 host 与 `Host` 头不一致，直接 403。无 `Origin` 的请求（curl、服务端调用、
 同源导航）放行。
+
+## 斜杠命令 `/quick-send`
+
+在输入框里敲 `/` 之后接着敲 `quick-send`（或缩写 `qs`），候选列表就是你的常用语；
+选中后**插入到光标处**，与点浮层完全一样——**不发送**。
+
+```
+/quick-send          → 全部常用语
+/qs                  → 同上（别名）
+/quick-send笔记       → 按关键字过滤（标题 / 分类 / 正文都能命中）
+```
+
+几个刻意的设计：
+
+- **裸 `/` 不列出常用语**。只敲一个 `/` 时菜单留给宿主的命令与技能，否则一敲斜杠就被
+  几十条常用语挤满，找 `/goal` 都费劲。必须显式敲命令名。
+- **边打边出**。`/q`、`/qu`、`/qui`… 都按「正在打命令名」处理，直接给全量，
+  不用一字不差打完才看得见东西。
+- **关键字不带空格**。`/quick-send 笔记` 这种带空格的写法在宿主侧会关掉菜单
+  （宿主遇到空白即结束当前 token），所以是 `/quick-send笔记` 连写。
+- **占位符在插入时展开**，与浮层、管理页一致。候选描述里显示的是**原文**
+  （`{{date}}` 就是 `{{date}}`）——那只是给你认条目用的，展开成今天的日期反而会误导。
+- **有 TTL 缓存**（8 秒）。边打字边过滤只发一次请求，不会每敲一个字打一次宿主。
+  新建/编辑/删除后缓存立即失效，`/q` 里马上能看到改动。
+
+> 兼容性：宿主没有 `inputTriggers` 服务时（较老的 DSH），斜杠命令**静默不注册**，
+> 浮层与管理页完全不受影响。这是刻意的——把 `inputTriggers` 写进 `inject` 会让缺该服务的
+> 宿主**整个 Client 半区不加载**，连带毁掉已有功能。启动日志会写明
+> `slash: /quick-send` 或 `slash: off`。
 
 ## 键盘操作
 
@@ -417,7 +451,7 @@ cd plugins/dsh-quick-send && npm test
 node --test test/store.test.mjs test/client.test.mjs test/e2e.test.mjs test/agent-tools.test.mjs
 ```
 
-**共 136 项，全部通过。**
+**共 166 项，全部通过。**
 
 ### store.test.mjs（41 项）
 
@@ -460,6 +494,46 @@ node --test test/store.test.mjs test/client.test.mjs test/e2e.test.mjs test/agen
 - **数据路径提示**：拿到 `/paths` 时渲染、拿不到时整块不渲染
 - **刷新**（3 项，0.3.3 新增）：管理页有 ⟳ 按钮且可点、浮层无刷新按钮、窗口重新可见时自动刷新
 - **筛选记忆**（2 项，0.3.3 新增）：搜索词写入 `localStorage`、存储不可用时不崩溃
+
+### slash.test.mjs（30 项，0.4.0 新增）
+
+按 DSH 真实契约（`InputTriggerSource`）装一个假 `inputTriggers` 服务，从外面调
+`candidates` / `onPick` —— 测到的是宿主实际会看到的形状，不是内部实现细节。
+
+- **注册**（3 项）：支持时注册唯一 `"/"` 源且 `name` 稳定、宿主不支持时静默降级并记日志、
+  注册包在 `ctx.effect` 内（卸载能自动摘掉）
+- **rc.5 契约：未 inject 的服务访问即抛错**（7 项，0.4.0 真机事故回归）：
+  rc.5 的 cordis 里 `ctx.inputTriggers` **不是返回 undefined，而是直接 throw**
+  （`cannot get property "x" without inject`）。0.4.0 首发时探测漏了一个 try/catch，
+  apply 整体失败 → entry failed → **界面回到出厂状态**。这组测试钉死：
+  三道探测（`reflect.get` → `ctx.get` → 属性访问）**每一道都必须容错**、
+  `reflect.get` 必须是真实首选（只有它能给服务时也要成功注册）、
+  `registerSource` 抛 `already registered` 时降级不冒泡。
+- **query 解析**（8 项）：裸 `/` 不出候选、无关词不认领、`/quick-send` 与 `/qs` 出全量、
+  **边打边试的中间态**（`/q` `/qu` `/qui` `/quick` `/quick-` …）都出全量、
+  带关键字按标题/分类/正文过滤、大小写不敏感
+- **候选形状**（3 项）：必须带 `phraseId`（否则 `onPick` 回查不到正文）、描述单行且截断、
+  有分类时带 `[分类]` 前缀、上限 30 条
+- **onPick**（4 项）：返回 `{ text }` 而非 claim（插入不发送）、占位符已展开、
+  无 `phraseId` 时返回 `undefined` 交还宿主、`phraseId` 指向已删条目时不抛错
+- **请求节流**（3 项）：连续过滤只打一次 HTTP、拉取失败回退旧缓存不抛错、
+  `signal` 已中止时零请求
+- **不破坏原有功能**（2 项）：注册后浮层/面板/管理页/侧边栏四个槽位照常挂载、
+  `exports.inject` **不含** `inputTriggers`——这是本次事故的根因所在：
+  `inject` 里声明了宿主没有的服务，entry 会永远 pending，**整个 Client 半区不加载**。
+  斜杠命令只能靠能力探测拿服务，绝不能写进 `inject`。
+
+> 这批测试做过**变异验证**（把实现改坏，确认测试会变红）：
+>
+> | 变异 | 结果 |
+> |---|---|
+> | 裸 `/` 从返回 null 改成返回全量 | 1 条变红 ✓ |
+> | 关键字检索从「标题+分类+正文」收窄成只看标题 | 1 条变红 ✓ |
+> | 删掉 `ctx.inputTriggers` 的 try/catch | **2 条变红**（精确复现炸 boot 的 bug）✓ |
+> | 删掉 `reflect` 分支 | 1 条变红 ✓ |
+>
+> 最后一条一开始**没变红**——因为断言只查源码文本顺序，抓不到「分支被绕过」。
+> 改写成「只让 reflect 能取到服务」的行为测试后才抓住。**只查文本顺序等于没测。**
 
 ### e2e.test.mjs（31 项）
 

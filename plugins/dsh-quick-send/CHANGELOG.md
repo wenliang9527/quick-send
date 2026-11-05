@@ -8,6 +8,97 @@
 > 无需也不会提供 0.3.2。0.3.2 的内容可在 git tag `dsh-v0.3.2` 与
 > GitHub Release 中查阅。
 
+## 0.4.0
+
+**新增第三个入口：斜杠命令 `/quick-send`（别名 `/qs`）。** 其余功能与 0.3.5 一致。
+
+### 为什么加
+
+浮层要「点按钮 → 找条目 → 点条目」，管理页要「切到侧边栏 → 找 → 用」。
+真正高频的场景是「手已经在键盘上」——这时最优路径是在输入框里直接敲。
+
+### 怎么用
+
+```
+/quick-send          → 全部常用语
+/qs                  → 别名
+/quick-send笔记       → 按标题 / 分类 / 正文过滤
+```
+
+选中后**插入到光标处**，与浮层行为完全一致——**不发送**。
+
+### 刻意的设计（每条都有代价，所以写明）
+
+| 决定 | 理由 |
+|---|---|
+| **裸 `/` 不列出常用语** | 只敲 `/` 时菜单要留给宿主的命令与技能；否则一敲斜杠就被几十条常用语挤满，找 `/goal` 都费劲 |
+| **边打边出**：`/q` `/qu` `/qui`… 都出全量 | 否则必须一字不差打完才看得见东西 |
+| **关键字不带空格**（`/quick-send笔记`） | 宿主侧遇到空白即结束当前 token，带空格写法不可达 |
+| **候选描述显示原文占位符** | 描述只用于认条目；展开成今天的日期反而误导 |
+| **8 秒 TTL 缓存** | 边打字边过滤只发一次请求；增删改后立即失效，`/q` 马上能看到改动 |
+
+### 兼容性：刻意不写进 `inject`
+
+`exports.inject` 保持 `['slots', 'locale']`，**没有**加 `inputTriggers`。
+原因：`inject` 里声明了但宿主没有该服务时，**整个 Client 半区不会加载**——
+那会连带毁掉浮层和管理页。所以改为 `ctx.get('inputTriggers')` 能力探测，
+拿不到就跳过注册，其它功能零影响。启动日志会写明 `slash: /quick-send` 或 `slash: off`。
+
+### 测试 136 → 166
+
+新增 `test/slash.test.mjs`（30 项）：按 DSH 真实 `InputTriggerSource` 契约装假服务，
+从外面调 `candidates`/`onPick`。其中两条是这次最容易写错、也最难在真机上发现的：
+
+- 裸 `/` 必须返回空（否则抢走宿主命令菜单）
+- 关键字检索必须覆盖标题 + 分类 + 正文（只看标题会「明明有却搜不到」）
+
+### 0.4.0 装机时炸了 boot —— 根因与补测
+
+0.4.0 在真机上首次启动时**崩溃**（界面回到出厂状态）。给 `apply` 包了 error 级
+`console` 仪表后拿到真实异常：
+
+```
+[quick-send] apply failed: Error: cannot get property "inputTriggers" without inject
+```
+
+rc.5 的 cordis 契约与我的假设相反：**未声明进 `inject` 的服务，`ctx.<name>` 与
+`ctx.get(name)` 一律直接抛错**，不是返回 `undefined`。而 `inject` 全是必需语义
+（「it only loads while all are available」），把 `inputTriggers` 写进 `inject`
+会让没有该服务的宿主 entry 永远 pending——两条路都是死路，正确解法只有
+**把每一道探测都包进 try/catch**。
+
+最终实现三道探测，逐级降级：
+
+| 顺序 | 手段 | 说明 |
+|---|---|---|
+| 1 | `ctx.reflect.get('inputTriggers', true)` | rc.5 的免 inject 读取口（`reflect.ts:226`），未提供返回 `undefined` 而非抛错 |
+| 2 | `ctx.get('inputTriggers')` | 旧宿主，包 try/catch |
+| 3 | `ctx.inputTriggers` | 最后兜底，包 try/catch |
+
+三道全失败 → `slash: off`，浮层与管理页完全不受影响。
+
+**这里补了 7 条测试**（原有的 23 条**完全没覆盖**这条路径——当时测试桩只提供
+`ctx.get`，而 rc.5 实际走的是 `reflect.get`，全绿是巧合）：
+
+| 变异 | 结果 |
+|---|---|
+| 删掉 `ctx.inputTriggers` 的 try/catch | **2 条变红**（精确复现炸 boot 的 bug）✓ |
+| 删掉 `reflect` 分支 | 1 条变红 ✓ |
+| 裸 `/` 改成返回全量 | 1 条变红 ✓ |
+| 关键字检索收窄成只看标题 | 1 条变红 ✓ |
+
+最后一条一开始**没变红**——因为断言只查源码文本顺序，抓不到「分支被绕过」。
+改写成「只让 reflect 能取到服务，其它两条都拿不到」的行为测试后才抓住。
+**只查文本顺序等于没测。**
+
+另附一次真实契约冒烟：用宿主 `dsh-client-ui-input-trigger` 的类型契约校验
+`trigger/name/candidates/onPick` 齐全，并实跑一次插入拿到 `{ text: '正文A 2026-11-05' }`
+（`{{date}}` 已展开）。
+
+另附一次真实契约冒烟：用宿主 `dsh-client-ui-input-trigger` 的类型契约校验
+`trigger/name/candidates/onPick` 齐全，并实跑一次插入拿到 `{ text: '正文A 2026-11-05' }`
+（`{{date}}` 已展开）。
+
 ## 0.3.5
 
 **勘误版：修正 0.3.4 对跨侧互斥前提的错误陈述，并补一条锁位置回归测试。**
