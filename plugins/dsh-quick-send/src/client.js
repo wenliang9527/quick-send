@@ -91,6 +91,7 @@ window.__ModuleLoader__.load({
         backBtn: '← 返回对话',
         backTip: '返回对话界面',
         backFail: '返回失败：{msg}',
+        refreshTip: '刷新列表（AI 改过常用语后点这里）',
       },
       en: {
         trigger: 'Phrases',
@@ -151,6 +152,7 @@ window.__ModuleLoader__.load({
         backBtn: '← Back to chat',
         backTip: 'Return to the conversation',
         backFail: 'Cannot go back: {msg}',
+        refreshTip: 'Refresh the list (click after the AI edits phrases)',
       },
     }
 
@@ -309,6 +311,40 @@ window.__ModuleLoader__.load({
       '.qs-panel{pointer-events:auto;max-width:100%;box-shadow:none;border-radius:12px;}',
     ].join('')
 
+    // ---- 会话内记忆（搜索词 / 分类筛选）-------------------------------------
+    //
+    // 每次打开面板都把搜索词和分类重置，用户每天要重复输入几十次。
+    // 存 localStorage：同一浏览器跨会话保留，换浏览器互不影响。
+    // 隐私模式 / 禁用存储时 getItem/setItem 会抛错，全部吞掉降级——
+    // 记忆是纯便利功能，绝不能因为它挂掉让整个面板打不开。
+
+    var REMEMBER_KEY = 'quick-send:remember:v1'
+
+    function readRemember() {
+      try {
+        if (typeof localStorage === 'undefined' || !localStorage) return {}
+        var raw = localStorage.getItem(REMEMBER_KEY)
+        if (!raw) return {}
+        var v = JSON.parse(raw)
+        if (!v || typeof v !== 'object') return {}
+        return {
+          query: typeof v.query === 'string' ? v.query : '',
+          category: typeof v.category === 'string' ? v.category : '',
+        }
+      } catch (e) {
+        return {}
+      }
+    }
+
+    function writeRemember(query, category) {
+      try {
+        if (typeof localStorage === 'undefined' || !localStorage) return
+        localStorage.setItem(REMEMBER_KEY, JSON.stringify({ query: query, category: category }))
+      } catch (e) {
+        /* 隐私模式等：静默降级 */
+      }
+    }
+
     // ---- 共享状态 -----------------------------------------------------------
 
     // 面板开关由触发按钮与面板组件共享（两者是不同槽位里的独立组件树）。
@@ -384,11 +420,14 @@ window.__ModuleLoader__.load({
       var snap = state[0]
       var setSnap = state[1]
 
-      var queryState = React.useState('')
+      // 初始值取自会话内记忆，避免每次打开都要重新输搜索词 / 重选分类
+      var remembered = readRemember()
+
+      var queryState = React.useState(remembered.query || '')
       var query = queryState[0]
       var setQuery = queryState[1]
 
-      var catState = React.useState('') // '' = 全部
+      var catState = React.useState(remembered.category || '') // '' = 全部
       var activeCat = catState[0]
       var setActiveCat = catState[1]
 
@@ -443,10 +482,61 @@ window.__ModuleLoader__.load({
         apiList().then(applySnap).catch(fail)
       }
 
+      /**
+       * 静默刷新：失败时不覆盖 error 状态、不弹 toast。
+       * 用于「窗口重新获得关注」这类自动触发——网络抖一下不该把界面变成错误页。
+       */
+      function refreshQuiet() {
+        apiList()
+          .then(applySnap)
+          .catch(function () {
+            /* 保留现有数据，不打扰用户 */
+          })
+      }
+
       React.useEffect(
         function () {
           if (!show) return
           refresh()
+        },
+        [show],
+      )
+
+      // 记住搜索词与分类筛选（值变化即写，量极小）
+      React.useEffect(
+        function () {
+          writeRemember(query, activeCat)
+        },
+        [query, activeCat],
+      )
+
+      // 管理页常驻时 show 恒为 true，上面那个 effect 只会在挂载时跑一次；
+      // 而 agent 调 quick_send_add 等工具直接改文件、没有 server→UI 推送通道，
+      // 于是「打开着管理页，让 AI 加一条」看不到变化。
+      //
+      // 不轮询（浪费），只在「用户可能重新关注面板」的时刻拉一次：
+      //   窗口重新可见（切回标签页/从最小化恢复）、窗口重新获得焦点。
+      // 刷新失败静默——旧数据还在，不打断正在操作的用户。
+      React.useEffect(
+        function () {
+          if (!show) return
+          function onVisible() {
+            if (typeof document !== 'undefined' && document && document.visibilityState === 'hidden') return
+            refreshQuiet()
+          }
+          function onFocus() {
+            refreshQuiet()
+          }
+          document.addEventListener('visibilitychange', onVisible)
+          if (typeof window !== 'undefined' && window && window.addEventListener) {
+            window.addEventListener('focus', onFocus)
+          }
+          return function () {
+            document.removeEventListener('visibilitychange', onVisible)
+            if (typeof window !== 'undefined' && window && window.removeEventListener) {
+              window.removeEventListener('focus', onFocus)
+            }
+          }
         },
         [show],
       )
@@ -855,6 +945,7 @@ window.__ModuleLoader__.load({
                 { type: 'button', className: 'qs-btn qs-back', title: t('backTip'), onClick: backToChat },
                 t('backBtn'),
               ),
+              h('button', { type: 'button', className: 'qs-btn', title: t('refreshTip'), onClick: refresh }, '⟳'),
               h('button', { type: 'button', className: 'qs-btn', title: t('exportBtn'), onClick: exportAll }, '↑'),
               h('button', { type: 'button', className: 'qs-btn', title: t('importBtn'), onClick: function () { fileInput.click() } }, '↓'),
               h(

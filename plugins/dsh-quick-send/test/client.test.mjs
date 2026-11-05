@@ -45,7 +45,8 @@ function loadClient(services) {
     },
     useEffect(fn, deps) {
       const i = idx++
-      pool[i] = { deps }
+      // 记录回调与本轮 deps，供 runEffects() 按需执行（真实 React 会在提交后跑）
+      pool[i] = { deps, fn, cleanup: undefined }
       trace.push('useEffect#' + i)
       return undefined
     },
@@ -118,7 +119,27 @@ function loadClient(services) {
     return { hookCount: idx, pool }
   }
 
-  return { mod, registered, renderPanel, renderManage, initPool, pool: () => pool }
+  /**
+   * 执行最近一次渲染注册的 useEffect 回调（真实 React 在提交后自动执行）。
+   *
+   * 注意：effect 闭包捕获的是**本轮渲染**的变量值。要验证"值变了之后 effect 看到新值"，
+   * 必须重新渲染拿到新闭包，再执行 —— 只调旧闭包会读到旧值（真实 React 也一样）。
+   * 返回 cleanup 函数数组，便于测试卸载。
+   */
+  function runEffects() {
+    const cleanups = []
+    const ran = new Set()
+    for (const slot of pool) {
+      if (!slot || typeof slot.fn !== 'function') continue
+      if (ran.has(slot)) continue
+      ran.add(slot)
+      const c = slot.fn()
+      if (typeof c === 'function') cleanups.push(c)
+    }
+    return cleanups
+  }
+
+  return { mod, registered, renderPanel, renderManage, initPool, runEffects, pool: () => pool }
 }
 
 /** 深度查找满足条件的节点 */
@@ -728,4 +749,124 @@ test('返回按钮在管理页才有，浮层没有', () => {
     p[2] = { v: { loading: false, error: '', phrases: SAMPLE, categories: [] } }
   })
   assert.equal(findAll(quick.out, (n) => String((n.props || {}).className || '').includes('qs-back')).length, 0)
+})
+// ---------------------------------------------------------------- 刷新与记忆（0.3.3）
+
+// 管理页常驻（show 恒 true），而数据刷新 effect 依赖 [show] → 只跑一次。
+// 结果：agent 调 quick_send_add 改了文件后，已打开的管理页看不到新条目。
+// 修法是①加 ⟳ 手动刷新按钮 ②窗口重新可见/获得焦点时自动刷新。
+
+test('管理页有刷新按钮，点击会重新拉取列表', () => {
+  const { initPool, renderManage } = loadClient()
+  const props = makeProps()
+  initPool(props)
+  const { out } = renderManage(props)
+
+  const btns = findAll(out, (n) => n.type === 'button' && n.props && n.props.title)
+  const refreshBtn = btns.find((b) => /刷新/.test(b.props.title || ''))
+  assert.ok(refreshBtn, '管理页头部应有刷新按钮（title 含「刷新」）')
+  assert.equal(typeof refreshBtn.props.onClick, 'function', '刷新按钮必须可点')
+})
+
+test('浮层不显示刷新按钮（保持轻量）', () => {
+  const { initPool, renderPanel } = loadClient()
+  const props = makeProps()
+  initPool(props)
+  const { out } = renderPanel(props, (p) => { p[0] = { v: true } })
+
+  const btns = findAll(out, (n) => n.type === 'button' && n.props && n.props.title)
+  const refreshBtn = btns.find((b) => /刷新/.test(b.props.title || ''))
+  assert.equal(refreshBtn, undefined, '浮层不应有刷新按钮')
+})
+
+test('窗口重新可见时自动刷新（不用手动点）', async () => {
+  const listeners = {}
+  let fetchCount = 0
+  const origFetch = globalThis.fetch
+  try {
+    // 注意顺序：loadClient() 内部会覆盖 globalThis.fetch / document，
+    // 所以自定义桩必须在它之后设置，否则会被冲掉。
+    const { initPool, renderManage, runEffects } = loadClient()
+
+    globalThis.fetch = async (url) => {
+      if (String(url).includes('/__quick-send/list')) fetchCount++
+      return { ok: true, json: async () => ({ phrases: [], categories: [] }) }
+    }
+    globalThis.document = {
+      createElement: () => ({ set textContent(_v) {}, parentNode: null }),
+      head: { appendChild() {} },
+      addEventListener(type, fn) { (listeners[type] = listeners[type] || []).push(fn) },
+      removeEventListener() {},
+      visibilityState: 'visible',
+    }
+
+    const props = makeProps()
+    initPool(props)
+    renderManage(props)
+    runEffects()
+
+    const fns = listeners['visibilitychange'] || []
+    assert.ok(fns.length > 0, '应监听 visibilitychange')
+
+    const before = fetchCount
+    fns.forEach((f) => f())
+    // refreshQuiet 内部是 Promise 链，需让微任务跑完再断言
+    await new Promise((r) => setTimeout(r, 0))
+    assert.ok(fetchCount > before, '窗口重新可见时应重新拉取列表')
+  } finally {
+    globalThis.fetch = origFetch
+  }
+})
+
+// ---- 搜索词与分类记忆 ----
+
+test('搜索词与分类写入 localStorage，重开面板可恢复', () => {
+  const store = {}
+  globalThis.localStorage = {
+    getItem: (k) => (k in store ? store[k] : null),
+    setItem: (k, v) => { store[k] = String(v) },
+    removeItem: (k) => { delete store[k] },
+  }
+  try {
+    const { initPool, renderManage, runEffects } = loadClient()
+    const props = makeProps()
+    initPool(props)
+    const { out } = renderManage(props)
+
+    // 找到搜索框并模拟输入
+    const search = findAll(out, (n) => n.type === 'input' && n.props && String(n.props.className || '').includes('qs-search'))[0]
+    assert.ok(search, '应有搜索框')
+    search.props.onChange({ target: { value: '关键词' } })
+
+    // setState 之后 React 会重新渲染 → effect 拿到含新 query 的闭包，然后才执行。
+    // 替身没有自动重渲染，这里手动重渲一次再跑 effect。
+    renderManage(props)
+    runEffects()
+
+    const keys = Object.keys(store)
+    assert.ok(
+      keys.some((k) => /quick-send:remember/i.test(k)),
+      '搜索词应写入 localStorage，实际键：' + keys.join(',') + ' 值：' + JSON.stringify(store),
+    )
+    const saved = keys.filter((k) => /quick-send:remember/i.test(k)).map((k) => store[k]).join('')
+    assert.ok(saved.includes('关键词'), 'localStorage 里应包含搜索词')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('localStorage 不可用时不报错（隐私模式降级）', () => {
+  globalThis.localStorage = {
+    getItem() { throw new Error('blocked') },
+    setItem() { throw new Error('blocked') },
+    removeItem() { throw new Error('blocked') },
+  }
+  try {
+    const { initPool, renderManage } = loadClient()
+    const props = makeProps()
+    initPool(props)
+    assert.doesNotThrow(() => renderManage(props), 'localStorage 抛错不应让面板崩溃')
+  } finally {
+    delete globalThis.localStorage
+  }
 })

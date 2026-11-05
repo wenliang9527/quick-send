@@ -1,6 +1,6 @@
 {
   "name": "@wenliang9527/dsh-quick-send",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "常用语快捷发送：浮层一键插到光标处（不覆盖、不自动发送），侧边栏管理页负责增删改与排序。与 ZCode quick-send 共享同一份 phrases.json 内容源，pinned/order 各侧本地。",
   "type": "module",
   "license": "MIT",
