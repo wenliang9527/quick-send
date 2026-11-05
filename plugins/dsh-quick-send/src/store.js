@@ -46,25 +46,99 @@ function isStr(v) {
   return typeof v === 'string'
 }
 
+let tmpSeq = 0
+
 /**
- * 原子写：先写 <file>.tmp，再 rename 覆盖。
- * Windows 上 rename 无法覆盖已存在的目标，故先 unlink 再 rename（同卷内仍是原子的）。
+ * 原子写：先写唯一的临时文件，再 rename 覆盖。
+ *
+ * 临时名必须**唯一**（进程号 + 单调序号 + 随机数）。早期用固定的 `<file>.tmp`
+ * 会让两个并发写抢同一个临时名：先完成的一方把 tmp 改名走，另一方 rename 时
+ * 目标已不存在 → ENOENT 崩溃。唯一名让每个写者互不干扰。
+ *
+ * Windows 上 rename 无法覆盖已存在的目标，故退化为先 unlink 再 rename
+ * （同卷内 rename 本身仍是原子的，读者永远看到完整的旧文件或完整的新文件）。
  */
 export async function atomicWrite(file, text) {
   await fs.promises.mkdir(path.dirname(file), { recursive: true })
-  const tmp = `${file}.tmp`
+  tmpSeq = (tmpSeq + 1) % 1e9
+  const rand = Math.random().toString(36).slice(2, 10)
+  const tmp = `${file}.${process.pid}.${tmpSeq}.${rand}.tmp`
   await fs.promises.writeFile(tmp, text, 'utf8')
   try {
     await fs.promises.rename(tmp, file)
   } catch (e) {
-    // Windows: 目标已存在时 rename 会失败，退化为先删后改名。
     if (e && (e.code === 'EEXIST' || e.code === 'EPERM')) {
-      await fs.promises.rm(file, { force: true })
-      await fs.promises.rename(tmp, file)
+      try {
+        await fs.promises.rm(file, { force: true })
+        await fs.promises.rename(tmp, file)
+      } catch (e2) {
+        await fs.promises.rm(tmp, { force: true })
+        throw e2
+      }
     } else {
+      // 失败时清掉自己的临时文件，不给下次留垃圾
+      await fs.promises.rm(tmp, { force: true })
       throw e
     }
   }
+}
+
+/**
+ * 进程内写串行队列。
+ *
+ * read → modify → write 之间没有任何锁，两个并发请求会交错：
+ * 双方都读到同一份旧快照，后写者用「旧快照 + 自己那条」覆盖文件，
+ * 先写者新增的条目被静默抹掉（lost update）。实测 2 个并发就丢。
+ *
+ * 把「读改写」整体串起来即可根除进程内竞态。跨进程（ZCode 与 DSH 同时写）
+ * 仍需 revision 机制，那属于 CONTRACT §4 的已知边界，不在本层解决。
+ */
+let writeChain = Promise.resolve()
+
+function withWriteLock(fn) {
+  const run = writeChain.then(fn, fn)
+  // 无论成功失败都让队列继续，避免一次异常卡死后续所有写
+  writeChain = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  return run
+}
+
+/** mutate 的返回值含义：{ skipWrite: true } 表示本次没有任何改动，不必落盘。 */
+function isSkip(out) {
+  return out !== null && typeof out === 'object' && out.skipWrite === true
+}
+
+/**
+ * 原子地读改写内容层：整个 read → mutate → write 在进程内串行执行。
+ * mutate 返回 { skipWrite: true } 时跳过写盘（用于「没有实际改动」的场景，
+ * 避免无谓地刷新 mtime、触发另一侧的变更检测）。
+ * @param {string} file phrases.json 路径
+ * @param {(doc: {schemaVersion:number, phrases:object[]}) => (any|Promise<any>)} mutate
+ *   就地修改 doc，可返回任意结果；返回的值会作为本函数的结果。
+ */
+export function mutatePhrases(file, mutate) {
+  return withWriteLock(async () => {
+    const doc = await readPhrases(file)
+    const out = await mutate(doc)
+    if (!isSkip(out)) await writePhrases(file, doc.phrases)
+    return out
+  })
+}
+
+/**
+ * 原子地读改写视图层，语义同 mutatePhrases。
+ * @param {string} file view.json 路径
+ * @param {(view: object) => (any|Promise<any>)} mutate
+ */
+export function mutateView(file, mutate) {
+  return withWriteLock(async () => {
+    const view = await readView(file)
+    const out = await mutate(view)
+    if (!isSkip(out)) await writeView(file, view)
+    return out
+  })
 }
 
 /** 读文本；解析失败则把原文件改名 .bad 留证，返回 null 交给调用方降级。 */

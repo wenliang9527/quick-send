@@ -118,9 +118,35 @@ AI 归纳只会**存进常用语库**，不会自动发送。你仍需在面板�
 
 ### 并发安全
 
-写操作（add/update/delete）都标记 `isConcurrencySafe: false`，同一次对话内不会并发写文件。
-跨侧（ZCode 与 DSH）同时写遵守契约 §4 的「全量读改写 + 原子替换 + last-write-wins」，
-对「单用户手点」和「低频 agent 写入」同样成立。
+**进程内已彻底串行，不会丢数据。** 0.3.2 修复了一个真实的数据丢失缺陷：
+
+早期版本用固定的 `<file>.tmp` 作临时名，且 `read → modify → write` 之间无锁。
+两个并发写会抢同一临时名（一方 `rename` 时目标已被另一方拿走 → `ENOENT` 崩溃），
+同时双方读到同一份旧快照，后写者用「旧快照 + 自己那条」覆盖文件，
+先写者的新增被静默抹掉。**实测 2 个并发新增就丢 1 条，3 个以上还会崩。**
+
+现在的做法：
+
+| 层 | 措施 |
+|---|---|
+| 临时文件 | 唯一名 `<file>.<pid>.<seq>.<rand>.tmp`，并发写互不干扰 |
+| 读改写 | `mutatePhrases` / `mutateView` 把整个「读 → 改 → 写」放进进程内串行队列 |
+
+因此下列场景都安全：面板连点「保存」、agent 工具与面板同时写、开两个浏览器标签页、
+`quick_send_add` 与其他写操作交错。
+
+> `isConcurrencySafe: false` 仍然保留，那是给 agent 工具调度器看的提示，
+> **不是**并发安全的唯一保障——它只管同一次对话内的工具调用，管不到面板点击和跨标签页。
+
+**跨侧同时写（ZCode 与 DSH 写同一份 `phrases.json`）仍是 last-write-wins**，
+违反契约 §4 的乐观锁要求，见下方「已知限制」。
+
+### 端点安全
+
+6 个 HTTP 端点挂在 DSH 的 loopback 服务上，本身无鉴权。为防「本机任意网页
+用 fetch 打这些端点」，0.3.2 起加了同源校验：浏览器发起的请求若带 `Origin`
+且其 host 与 `Host` 头不一致，直接 403。无 `Origin` 的请求（curl、服务端调用、
+同源导航）放行。
 
 ## 键盘操作
 
@@ -350,12 +376,15 @@ cd plugins/dsh-quick-send && npm test
 node --test test/store.test.mjs test/client.test.mjs test/e2e.test.mjs test/agent-tools.test.mjs
 ```
 
-**共 112 项，全部通过。**
+**共 120 项，全部通过。**
 
-### store.test.mjs（28 项）
+### store.test.mjs（30 项）
 
 - **占位符**：三个时间宏按本地时区、占位符内允许空格、`{{workspace}}`/`{{clipboard}}` 原样保留、
   未知占位符保留、多处出现各自展开、空/非字符串安全
+- **占位符一致性**（2 项，0.3.2 新增）：从 `client.js` 源码抽出 `expandText` / `hasSupportedPlaceholder`
+  现场编译，与 Host 版比对 20 个边界用例（`{{DATE}}`、`{{date`、`{{}}`、`{{{date}}}` 等），
+  防止两份实现漂移
 - **存储**：文件不存在返回空表、往返一致、中文换行引号无损、BOM 兼容、
   损坏文件隔离为 `.bad` 并空表启动、`schemaVersion` 过高抛错、缺字段抛错、重复 id 去重、未知字段丢弃
 - **原子写**：不残留 `.tmp`、重复覆盖同一路径成功
@@ -384,7 +413,7 @@ node --test test/store.test.mjs test/client.test.mjs test/e2e.test.mjs test/agen
 - **导入/导出**：隐藏 file input 存在且 accept 正确
 - **数据路径提示**：拿到 `/paths` 时渲染、拿不到时整块不渲染
 
-### e2e.test.mjs（25 项）
+### e2e.test.mjs（31 项）
 
 把 Host 半区注册的 handler 挂到**真实 `http.Server`** 上，走完整 HTTP 往返（不启动 DSH）：
 
@@ -398,6 +427,8 @@ node --test test/store.test.mjs test/client.test.mjs test/e2e.test.mjs test/agen
 | **跨侧共享** | 外部改写文件后能读到、异构 id（UUID/数字式）都保留、**两个实例共用一个 phrases.json 可互相读到** |
 | **容错** | phrases 损坏隔离 `.bad` 并空表启动、`schemaVersion` 过高拒绝写入、view 损坏不影响内容 |
 | **paths** | 返回实际路径、`panelSlot` 默认 overlay / 配置 dock 时返回 dock |
+| **并发写**（3 项，0.3.2 新增） | 同时新增 8 条一条不丢、增删交错总数正确、目录不残留 `.tmp` |
+| **同源校验**（3 项，0.3.2 新增） | 跨源 POST 403 且不改数据、跨源 GET 403、同源与无 Origin 放行 |
 
 > **重要分层验证**：磁盘 `phrases.json` 是 **6 字段**（内容契约），
 > API `/list` 返回 **8 字段**（6 + `pinned`/`order`）。两者刻意不同，测试都有断言。
@@ -475,7 +506,9 @@ src/client.js  src/expand.js  src/index.js  src/store.js
 
 - **`{{workspace}}` 首版不展开**：DSH 侧"当前工作区"会随会话切换而变化，语义不可预测，故先原样保留。
 - **`{{clipboard}}` 不支持**：浏览器侧拿不到剪贴板内容。
-- **无乐观锁**：依赖"单用户跨两窗口手点撞不上毫秒级窗口"的前提；将来若要支持多端并发写，需补 revision 机制。
+- **跨进程无乐观锁**：**本进程内已串行化（0.3.2 起不丢数据）**，但 ZCode 与 DSH 同时写同一份
+  `phrases.json` 时仍是 last-write-wins。实测依据：两次「读到同一快照再各自写」会丢掉其中一条。
+  要支持真正的多端并发写需补 revision 机制（契约 §4 已列为待办）。
 - **删除不跨侧同步视图**：本侧删除会清掉本侧 view 条目，另一侧的 view 残留会被忽略（不报错、不清理）。
 - **长度上限 120 / 20000 / 20**（标题/正文/分类）：超长静默截断，不是契约规定，ZCode 侧若更小需对齐。
 - **浮层插入后收起**：连点需重新打开（管理页不收起，可连插）。
@@ -484,8 +517,63 @@ src/client.js  src/expand.js  src/index.js  src/store.js
 - **`panelSlot` 改动需重启 DSH**：Client 半区通过 HTTP 读取该配置，不支持热切换槽位。
 - **导入只做新增，不做去重**：同一文件导入两次会产生重复条目（id 不参与匹配）。
 - **浮层不含编辑**：浮层只负责插入，新建/改写请走管理页（侧边栏 📚 或浮层上的「管理」按钮）。
+- **占位符逻辑有两份实现**：Host 的 `src/expand.js` 是权威版，`client.js` 的 `expandText()`
+  是浏览器侧副本（无法 import 宿主模块）。两者靠 `store.test.mjs` 里的一致性测试钉死
+  （20 个边界用例 + 变异测试验证有效），改动任一侧漏改另一侧会立刻测试失败。
 
 ## 变更记录
+
+### 0.3.2 —— 修复并发写丢数据 + 端点同源校验
+
+**升级建议：所有用户。** 本版修复一个会导致常用语**静默丢失**的缺陷。
+
+#### 1. 并发写丢数据（严重）
+
+`atomicWrite` 用固定的 `<file>.tmp` 作临时名，两个并发写抢同一名字；同时
+`read → modify → write` 之间无锁，双方读到同一份旧快照。实测结果：
+
+```
+2 个并发新增  → 只剩 1 条
+3 个以上并发  → 剩 1 条 + ENOENT 崩溃
+读改写交错    → 后写者覆盖先写者
+```
+
+**为什么 0.3.1 的 `isConcurrencySafe: false` 没挡住**：它只约束同一次对话内的
+agent 工具调用，管不到面板连点「保存」、agent 工具与面板同时写、两个浏览器标签页。
+
+修复：
+
+| 层 | 改动 |
+|---|---|
+| 临时文件 | 唯一名 `<file>.<pid>.<seq>.<rand>.tmp`，失败时清理自己的临时文件 |
+| 读改写 | 新增 `mutatePhrases` / `mutateView`，把整个「读 → 改 → 写」放进进程内串行队列 |
+| 接入点 | `index.js` 的 save/remove/setView/reorder、`agent-tools.js` 的 add/update/delete 全部改走原子读改写 |
+
+`reorder` 顺带修正：原先用外部快照算顺序再单独读视图，现在把「读快照 + 归一化 + 交换」放进同一把锁。
+
+#### 2. 端点同源校验
+
+6 个端点挂在 loopback 且无鉴权，本机任意恶意网页可用 `fetch` 删光或读走常用语。
+现对带 `Origin` 且 host 与 `Host` 不一致的请求返回 403；无 `Origin`（curl/服务端）放行。
+
+#### 3. 占位符一致性守卫
+
+Host `src/expand.js` 与 `client.js` 的 `expandText()` 是两份实现。新增测试抽源码现场编译
+比对 20 个边界用例，并用**变异测试**验证有效性（把 `-` 改成 `/` 会立刻报错）。
+
+#### 4. 发布元数据
+
+- 新增 `LICENSE`（MIT，与 `package.json` 一致）与 `CHANGELOG.md`，均纳入 npm 包
+- `index.js` 补注释说明 `inject: []` 为何是有意设计（见「端点安全」与 DEV-NOTES §3）
+
+#### 测试 112 → 120
+
+| 文件 | 项数 | 新增 |
+|---|---|---|
+| `store.test.mjs` | 30 | +2 占位符一致性 |
+| `client.test.mjs` | 34 | — |
+| `e2e.test.mjs` | 31 | +3 并发写、+3 同源校验 |
+| `agent-tools.test.mjs` | 25 | — |
 
 ### 0.3.1 —— 文案对齐（代码零改动）
 

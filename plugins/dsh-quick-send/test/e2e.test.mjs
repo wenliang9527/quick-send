@@ -439,3 +439,107 @@ test('paths：config 指定 dock 时返回 dock', async () => {
     assert.equal(r.body.panelSlot, 'dock')
   } finally { await h.close() }
 })
+
+// ---------------------------------------------------------------- 并发写
+
+// 并发写曾导致两类事故（0.3.1 及以前）：
+//   1. atomicWrite 用固定 `${file}.tmp`，两个并发写抢同一临时名 → ENOENT 崩溃
+//   2. read → modify → write 之间无锁 → 后写者覆盖先写者的新增（lost update）
+// 这两条测试锁住修复，防止回归。
+
+test('并发写：同时新增 8 条，一条都不能丢', async () => {
+  const h = await startHost()
+  try {
+    const n = 8
+    const results = await Promise.all(
+      Array.from({ length: n }, (_, i) =>
+        h.post('/__quick-send/save', { title: '并发' + i, text: 'body-' + i }),
+      ),
+    )
+    for (const r of results) assert.equal(r.code, 200, '并发写不应报错')
+    const list = await h.get('/__quick-send/list')
+    assert.equal(list.body.phrases.length, n, `期望 ${n} 条，实际 ${list.body.phrases.length} 条（丢数据）`)
+    const titles = list.body.phrases.map((p) => p.title).sort()
+    assert.deepEqual(titles, Array.from({ length: n }, (_, i) => '并发' + i).sort())
+  } finally { await h.close() }
+})
+
+test('并发写：新增与删除交错时总数正确', async () => {
+  const h = await startHost()
+  try {
+    const first = await h.post('/__quick-send/save', { title: '待删', text: 'x' })
+    const delId = first.body.phrases[0].id
+
+    await Promise.all([
+      h.post('/__quick-send/save', { title: 'A', text: 'a' }),
+      h.post('/__quick-send/save', { title: 'B', text: 'b' }),
+      h.post('/__quick-send/delete', { id: delId }),
+      h.post('/__quick-send/save', { title: 'C', text: 'c' }),
+    ])
+
+    const list = await h.get('/__quick-send/list')
+    assert.equal(list.body.phrases.length, 3, '应剩 A/B/C 三条')
+    assert.ok(!list.body.phrases.some((p) => p.id === delId), '被删的条目不应复活')
+  } finally { await h.close() }
+})
+
+test('并发写：目录里不残留 .tmp 文件', async () => {
+  const h = await startHost()
+  try {
+    await Promise.all(
+      Array.from({ length: 6 }, (_, i) => h.post('/__quick-send/save', { title: 't' + i, text: 'b' + i })),
+    )
+    const leftovers = fs.readdirSync(h.dir).filter((f) => f.includes('.tmp'))
+    assert.deepEqual(leftovers, [], '并发写后不应留下临时文件：' + leftovers.join(','))
+  } finally { await h.close() }
+})
+
+// ---------------------------------------------------------------- 同源校验
+
+// 端点无鉴权，挂在 DSH 的 loopback 服务上。不加校验时，用户浏览器里任意恶意页面
+// 都能 POST /__quick-send/delete 清空常用语。以下三条锁住同源保护。
+
+test('同源校验：跨源 POST 被拒绝且不改数据', async () => {
+  const h = await startHost()
+  try {
+    const seeded = await h.post('/__quick-send/save', { title: '要保住', text: 'x' })
+    assert.equal(seeded.code, 200)
+    const id = seeded.body.phrases[0].id
+
+    const res = await fetch(h.base + '/__quick-send/delete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+      body: JSON.stringify({ id }),
+    })
+    assert.equal(res.status, 403, '跨源请求必须 403')
+
+    const list = await h.get('/__quick-send/list')
+    assert.equal(list.body.phrases.length, 1, '跨源请求不得删掉数据')
+  } finally { await h.close() }
+})
+
+test('同源校验：跨源 GET 也被拒绝', async () => {
+  const h = await startHost()
+  try {
+    const res = await fetch(h.base + '/__quick-send/list', {
+      headers: { origin: 'https://evil.example' },
+    })
+    assert.equal(res.status, 403, '跨源读同样要挡（内容可能含隐私）')
+  } finally { await h.close() }
+})
+
+test('同源校验：同源请求与无 Origin 请求正常放行', async () => {
+  const h = await startHost()
+  try {
+    // 带上与 Host 一致的 Origin
+    const same = new URL(h.base)
+    const r1 = await fetch(h.base + '/__quick-send/list', {
+      headers: { origin: same.origin },
+    })
+    assert.equal(r1.status, 200, '同源应放行')
+
+    // 无 Origin（curl / 服务端调用）
+    const r2 = await fetch(h.base + '/__quick-send/list')
+    assert.equal(r2.status, 200, '无 Origin 应放行')
+  } finally { await h.close() }
+})

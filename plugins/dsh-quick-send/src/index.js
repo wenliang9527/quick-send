@@ -18,16 +18,28 @@ import {
   defaultPhrasesFile,
   defaultViewFile,
   readPhrases,
-  writePhrases,
   readView,
-  writeView,
   mergeForDisplay,
   genId,
   nowIso,
+  mutatePhrases,
+  mutateView,
 } from './store.js'
 import { registerAgentTools } from './agent-tools.js'
 
 const name = '@wenliang9527/dsh-quick-send'
+
+// inject 保持空数组是有意的，不是遗漏：
+//
+//   webServer —— 本插件是 Web 插件（package.json 的 dsh.client.platform = 'web'），
+//                实际运行一定有；但若声明成硬依赖，在无 HTTP 载体的组合里
+//                apply 将永远不执行，连带 agent 工具一起失效。
+//   tools     —— 真正可选：有的组合没装工具注册表，此时只失去 agent 工具，
+//                面板与端点照常工作。
+//
+// 两者都在 apply 里用 ctx.get 探测、取不到再 ctx.inject 等待，属于「降级可用」，
+// 比声明硬依赖更稳。见 DEV-NOTES §3「inject 缺失是静默失败的头号原因」——
+// 那条讲的是「要用的服务必须等到就绪」，这里通过显式 inject 回调满足同一要求。
 const inject = []
 
 const MAX_TITLE = 120
@@ -61,7 +73,6 @@ export function apply(ctx, config) {
   }
 
   async function save(body) {
-    const doc = await readPhrases(phrasesFile)
     const title = clampStr(body && body.title, MAX_TITLE)
     const text = clampStr(body && body.text, MAX_TEXT)
     const category = clampStr(body && body.category, MAX_CATEGORY)
@@ -70,46 +81,47 @@ export function apply(ctx, config) {
     }
     const id = body && typeof body.id === 'string' ? body.id : ''
     const t = nowIso()
-    const idx = id ? doc.phrases.findIndex((p) => p.id === id) : -1
-    if (idx >= 0) {
-      const cur = doc.phrases[idx]
-      doc.phrases[idx] = { ...cur, title, text, category, updatedAt: t }
-    } else {
-      doc.phrases.push({ id: id || genId(), title, text, category, createdAt: t, updatedAt: t })
-    }
-    await writePhrases(phrasesFile, doc.phrases)
+    // 读-改-写整体加锁：并发保存时不会互相覆盖
+    await mutatePhrases(phrasesFile, (doc) => {
+      const idx = id ? doc.phrases.findIndex((p) => p.id === id) : -1
+      if (idx >= 0) {
+        const cur = doc.phrases[idx]
+        doc.phrases[idx] = { ...cur, title, text, category, updatedAt: t }
+      } else {
+        doc.phrases.push({ id: id || genId(), title, text, category, createdAt: t, updatedAt: t })
+      }
+    })
     return snapshot()
   }
 
   async function remove(body) {
-    const doc = await readPhrases(phrasesFile)
     const id = body && typeof body.id === 'string' ? body.id : ''
     if (!id) throw Object.assign(new Error('缺少 id'), { status: 400 })
-    const before = doc.phrases.length
-    doc.phrases = doc.phrases.filter((p) => p.id !== id)
-    if (doc.phrases.length === before) {
+    const removed = await mutatePhrases(phrasesFile, (doc) => {
+      const before = doc.phrases.length
+      doc.phrases = doc.phrases.filter((p) => p.id !== id)
+      return doc.phrases.length !== before
+    })
+    if (!removed) {
       throw Object.assign(new Error('未找到该条目'), { status: 404 })
     }
-    await writePhrases(phrasesFile, doc.phrases)
     // 顺手清掉该 id 的本地视图，避免残留
-    const view = await readView(viewFile)
-    if (view[id]) {
-      delete view[id]
-      await writeView(viewFile, view)
-    }
+    await mutateView(viewFile, (view) => {
+      if (view[id]) delete view[id]
+    })
     return snapshot()
   }
 
   async function setView(body) {
     const id = body && typeof body.id === 'string' ? body.id : ''
     if (!id) throw Object.assign(new Error('缺少 id'), { status: 400 })
-    const view = await readView(viewFile)
-    const cur = view[id] || { pinned: false, order: 0 }
-    view[id] = {
-      pinned: typeof body.pinned === 'boolean' ? body.pinned : cur.pinned,
-      order: Number.isFinite(body.order) ? Math.trunc(body.order) : cur.order,
-    }
-    await writeView(viewFile, view)
+    await mutateView(viewFile, (view) => {
+      const cur = view[id] || { pinned: false, order: 0 }
+      view[id] = {
+        pinned: typeof body.pinned === 'boolean' ? body.pinned : cur.pinned,
+        order: Number.isFinite(body.order) ? Math.trunc(body.order) : cur.order,
+      }
+    })
     return snapshot()
   }
 
@@ -120,36 +132,30 @@ export function apply(ctx, config) {
     if (!id || (direction !== 'up' && direction !== 'down')) {
       throw Object.assign(new Error('参数无效'), { status: 400 })
     }
-    const snap = await snapshot()
-    const rows = snap.phrases
-    const i = rows.findIndex((r) => r.id === id)
-    if (i < 0) throw Object.assign(new Error('未找到该条目'), { status: 404 })
-    const cur = rows[i]
     const step = direction === 'up' ? -1 : 1
-    // 找同段内相邻项
-    let j = i + step
-    if (j < 0 || j >= rows.length) return snap
-    const other = rows[j]
-    if (other.pinned !== cur.pinned || other.category !== cur.category) return snap
-
-    const view = await readView(viewFile)
-    // 规范化该段 order 为 0..n-1 后再交换，避免历史 order 值混乱导致交换无效
-    const seg = rows.filter((r) => r.pinned === cur.pinned && r.category === cur.category)
-    seg.forEach((r, k) => {
-      view[r.id] = { pinned: r.pinned, order: k }
+    // 排序要基于最新快照，所以整个「读快照 + 归一化 + 交换」放进同一把锁
+    const found = await mutateView(viewFile, async (view) => {
+      const doc = await readPhrases(phrasesFile)
+      const rows = mergeForDisplay(doc.phrases, view)
+      const i = rows.findIndex((r) => r.id === id)
+      if (i < 0) return false
+      const cur = rows[i]
+      // 规范化该段 order 为 0..n-1 后再交换，避免历史 order 值混乱导致交换无效
+      const seg = rows.filter((r) => r.pinned === cur.pinned && r.category === cur.category)
+      seg.forEach((r, k) => {
+        view[r.id] = { pinned: r.pinned, order: k }
+      })
+      const si = seg.findIndex((r) => r.id === id)
+      const sj = si + step
+      if (sj < 0 || sj >= seg.length) return true
+      const a = seg[si].id
+      const b = seg[sj].id
+      const ao = view[a].order
+      view[a].order = view[b].order
+      view[b].order = ao
+      return true
     })
-    const si = seg.findIndex((r) => r.id === id)
-    const sj = si + step
-    if (sj < 0 || sj >= seg.length) {
-      await writeView(viewFile, view)
-      return snapshot()
-    }
-    const a = seg[si].id
-    const b = seg[sj].id
-    const ao = view[a].order
-    view[a].order = view[b].order
-    view[b].order = ao
-    await writeView(viewFile, view)
+    if (!found) throw Object.assign(new Error('未找到该条目'), { status: 404 })
     return snapshot()
   }
 
@@ -177,8 +183,36 @@ export function apply(ctx, config) {
     }
   }
 
+  /**
+   * 同源校验：挡掉「本机任意网页用 fetch 打本插件端点」的攻击面。
+   *
+   * 端点挂在 DSH 的 loopback HTTP 服务上，没有鉴权。不加判断的话，
+   * 用户浏览器里任何一个恶意页面都能 `POST /__quick-send/delete` 清空常用语，
+   * 或 `GET /list` 把内容读走。
+   *
+   * 判定：浏览器发起的跨源请求一定带 Origin 头，其 host 与 Host 头不一致即为跨源。
+   * 无 Origin（curl、服务端调用、同源导航）放行，避免误伤正常调用。
+   */
+  function isSameOrigin(req) {
+    const origin = req.headers && req.headers.origin
+    if (!origin) return true
+    const host = req.headers && req.headers.host
+    if (!host) return false
+    let originHost
+    try {
+      originHost = new URL(origin).host
+    } catch (e) {
+      return false // "null" 或畸形 Origin 一律拒绝
+    }
+    return originHost === host
+  }
+
   function route(handler) {
     return async (req, res) => {
+      if (!isSameOrigin(req)) {
+        sendJson(res, 403, { error: '拒绝跨源请求' })
+        return
+      }
       try {
         sendJson(res, 200, await handler(req))
       } catch (e) {

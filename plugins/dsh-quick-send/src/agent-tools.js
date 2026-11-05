@@ -12,7 +12,7 @@
 //   3. 不写 source 字段，保持六字段契约；agent 新建的用 dsh-agent- 前缀 id 便于识别
 //   4. 建议（非强制）agent 整理的条目写进 agent 开头的分类，便于人工筛选
 
-import { readPhrases, writePhrases, genId, nowIso } from './store.js'
+import { readPhrases, genId, nowIso, mutatePhrases } from './store.js'
 
 const MAX_TITLE = 120
 const MAX_TEXT = 20000
@@ -248,10 +248,13 @@ export function registerAgentTools(deps) {
           createdAt: t,
           updatedAt: t,
         }
-        doc.phrases.push(entry)
-        await writePhrases(phrasesFile, doc.phrases)
+        // 读-改-写整体加锁，避免与面板/其他工具并发时互相覆盖
+        const total = await mutatePhrases(phrasesFile, (d) => {
+          d.phrases.push(entry)
+          return d.phrases.length
+        })
 
-        return { id: entry.id, title: entry.title, category: entry.category, total: doc.phrases.length }
+        return { id: entry.id, title: entry.title, category: entry.category, total }
       },
       // 写文件，不可并发
       isConcurrencySafe() {
@@ -322,47 +325,51 @@ export function registerAgentTools(deps) {
           throw new Error('缺少 id；请先调用 quick_send_list 获取')
         }
 
-        const doc = await readPhrases(phrasesFile)
-        const idx = doc.phrases.findIndex((p) => p.id === id)
-        if (idx < 0) {
+        // 把「定位 + 比对 + 落盘」放进同一把锁，避免并发时基于旧快照覆盖别人的改动
+        const result = await mutatePhrases(phrasesFile, (doc) => {
+          const idx = doc.phrases.findIndex((p) => p.id === id)
+          if (idx < 0) return null
+          const cur = doc.phrases[idx]
+          const next = { ...cur }
+          const changed = []
+
+          if (a.title !== undefined) {
+            const v = clampStr(a.title, MAX_TITLE)
+            if (v !== cur.title) {
+              next.title = v
+              changed.push('title')
+            }
+          }
+          if (a.text !== undefined) {
+            const v = clampStr(a.text, MAX_TEXT)
+            if (v.trim() === '') throw new Error('正文不能为空')
+            if (v !== cur.text) {
+              next.text = v
+              changed.push('text')
+            }
+          }
+          if (a.category !== undefined) {
+            const v = clampStr(a.category, MAX_CATEGORY)
+            if (v !== cur.category) {
+              next.category = v
+              changed.push('category')
+            }
+          }
+
+          if (changed.length > 0) {
+            // id 与 createdAt 保持不变，避免另一侧的 view.json 里 pinned/order 失效
+            next.updatedAt = nowIso()
+            doc.phrases[idx] = next
+            return { title: next.title, category: next.category, changed }
+          }
+          // 没有任何可改字段 → 不落盘（保持原行为，避免无谓刷新 mtime）
+          return { skipWrite: true, title: next.title, category: next.category, changed }
+        })
+
+        if (!result) {
           throw new Error(`未找到 id=${id} 的条目；请先调用 quick_send_list 确认`)
         }
-
-        const cur = doc.phrases[idx]
-        const next = { ...cur }
-        const changed = []
-
-        if (a.title !== undefined) {
-          const v = clampStr(a.title, MAX_TITLE)
-          if (v !== cur.title) {
-            next.title = v
-            changed.push('title')
-          }
-        }
-        if (a.text !== undefined) {
-          const v = clampStr(a.text, MAX_TEXT)
-          if (v.trim() === '') throw new Error('正文不能为空')
-          if (v !== cur.text) {
-            next.text = v
-            changed.push('text')
-          }
-        }
-        if (a.category !== undefined) {
-          const v = clampStr(a.category, MAX_CATEGORY)
-          if (v !== cur.category) {
-            next.category = v
-            changed.push('category')
-          }
-        }
-
-        if (changed.length > 0) {
-          // id 与 createdAt 保持不变，避免另一侧的 view.json 里 pinned/order 失效
-          next.updatedAt = nowIso()
-          doc.phrases[idx] = next
-          await writePhrases(phrasesFile, doc.phrases)
-        }
-
-        return { id, title: next.title, category: next.category, changed }
+        return { id, title: result.title, category: result.category, changed: result.changed }
       },
       isConcurrencySafe() {
         return false
@@ -424,14 +431,17 @@ export function registerAgentTools(deps) {
           throw new Error('删除需要显式传 confirm:true；请先向用户确认要删除哪一条')
         }
 
-        const doc = await readPhrases(phrasesFile)
-        const target = doc.phrases.find((p) => p.id === id)
+        const target = (await readPhrases(phrasesFile)).phrases.find((p) => p.id === id)
         if (!target) throw new Error(`未找到 id=${id} 的条目`)
 
-        doc.phrases = doc.phrases.filter((p) => p.id !== id)
-        await writePhrases(phrasesFile, doc.phrases)
+        const removed = await mutatePhrases(phrasesFile, (doc) => {
+          const before = doc.phrases.length
+          doc.phrases = doc.phrases.filter((p) => p.id !== id)
+          return { ok: before !== doc.phrases.length, total: doc.phrases.length }
+        })
+        if (!removed.ok) throw new Error(`未找到 id=${id} 的条目`)
 
-        return { deleted: id, title: target.title, total: doc.phrases.length }
+        return { deleted: id, title: target.title, total: removed.total }
       },
       isConcurrencySafe() {
         return false

@@ -8,7 +8,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { expand, formatDate, formatTime, formatDateTime } from '../src/expand.js'
+import { expand, formatDate, formatTime, formatDateTime, hasSupportedPlaceholder } from '../src/expand.js'
 import {
   readPhrases,
   writePhrases,
@@ -292,5 +292,94 @@ test('defaultPhrasesFile: 环境变量可覆盖（共享给其他客户端时用
   } finally {
     if (prev === undefined) delete process.env.DSH_QUICK_SEND_PHRASES_FILE
     else process.env.DSH_QUICK_SEND_PHRASES_FILE = prev
+  }
+})
+// ---- Client 与 Host 的占位符实现一致性 ----
+
+// 占位符展开有两份实现：Host 的 src/expand.js（权威）和 client.js 里的
+// expandText()（浏览器侧，无法 import 宿主模块，只能复制）。两份漂移过一次
+// 就会让「浮层里看到的」和「实际插入的」不一致，所以用测试钉死语义。
+//
+// 做法：从 client.js 源码里抽出 expandText / hasSupportedPlaceholder 的函数体
+// 现场编译，与 Host 版逐用例比对。
+
+import { readFileSync } from 'node:fs'
+
+function extractFn(src, name) {
+  const start = src.indexOf('function ' + name)
+  assert.notEqual(start, -1, '在 client.js 中找不到函数 ' + name)
+  let depth = 0
+  let i = src.indexOf('{', start)
+  for (; i < src.length; i++) {
+    if (src[i] === '{') depth++
+    else if (src[i] === '}') {
+      depth--
+      if (depth === 0) break
+    }
+  }
+  return src.slice(start, i + 1)
+}
+
+function loadClientExpand() {
+  const src = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+  const code = [extractFn(src, 'pad'), extractFn(src, 'expandText')].join('\n') + '\nreturn expandText;'
+  return new Function(code)()
+}
+
+function loadClientHasPlaceholder() {
+  const src = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+  return new Function(extractFn(src, 'hasSupportedPlaceholder') + '\nreturn hasSupportedPlaceholder;')()
+}
+
+// 只比较「形状」，忽略真实时间差异（两边各自取 new Date()）
+function shape(s) {
+  return String(s)
+    .replace(/\d{4}-\d{2}-\d{2}/g, '<D>')
+    .replace(/\d{2}:\d{2}(:\d{2})?/g, '<T>')
+}
+
+const PLACEHOLDER_CASES = [
+  '{{date}}',
+  '{{time}}',
+  '{{datetime}}',
+  '{{ date }}',
+  '{{datetime}} 与 {{date}} 与 {{time}}',
+  '{{unknown}}',
+  '{{workspace}}',
+  '{{clipboard}}',
+  '{{DATE}}',
+  '{{Date}}',
+  '{{date',
+  '{{}}',
+  '{{ }}',
+  '{{a1_b2}}',
+  '无占位符',
+  '',
+  '{{date}}\n{{time}}',
+  '前{{date}}后',
+  '{{ date}}{{time}}',
+  '{{{date}}}',
+]
+
+test('expand 一致性：Client 与 Host 对全部用例展开结果相同', () => {
+  const clientExpand = loadClientExpand()
+  const hostNow = new Date(2026, 10, 5, 9, 7, 3)
+  for (const input of PLACEHOLDER_CASES) {
+    assert.equal(
+      shape(clientExpand(input)),
+      shape(expand(input, hostNow)),
+      '占位符展开结果漂移，input=' + JSON.stringify(input),
+    )
+  }
+})
+
+test('hasSupportedPlaceholder 一致性：Client 与 Host 判定相同', () => {
+  const clientHsp = loadClientHasPlaceholder()
+  for (const input of PLACEHOLDER_CASES) {
+    assert.equal(
+      clientHsp(input),
+      hasSupportedPlaceholder(input),
+      '占位符判定漂移，input=' + JSON.stringify(input),
+    )
   }
 })
