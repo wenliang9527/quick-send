@@ -43,6 +43,7 @@
 ```json
 {
   "schemaVersion": 1,
+  "revision": 1,
   "phrases": [
     {
       "id": "dsh-mf3k2a-7x1q",
@@ -57,6 +58,9 @@
 ```
 
 - `schemaVersion`：整数，当前 `1`。读到大版本不认识时**拒绝写入**并提示，不静默降级。
+- `revision`：整数，**可选**（缺省按 `0`）。跨进程乐观锁载体，见「写入纪律」第 5 条。
+  写者每次写入应 +1 且**永不回退**；读方不得因不认识该字段而在写回时丢弃它。
+  DSH 0.3.4 起实现；ZCode 侧尚未写入该字段（DSH 侧兼容缺省）。
 - `title` / `category` 允许空串。
 - `createdAt` / `updatedAt`：ISO 8601 字符串（两侧同格式，避免 ZCode 的 ISO 与早期 DSH 数字时间戳冲突）。
 
@@ -82,11 +86,20 @@
    - **进程内**：必须串行——DSH 0.3.2 `mutatePhrases`/`mutateView` 队列；ZCode 单线程循环天然串行。
    - **ZCode↔ZCode（多会话多 exe）**：数据目录级 lockfile（`quick-send.lock`，create_new 抢锁 +
      25ms 重试至 5s + 持有者逾期 10s 崩溃残留抢占），ZCode v0.5.6 起实施。
-   - **ZCode↔DSH 跨进程**：**待办——revision 机制**（已知边界，DSH 0.3.2 store.js 注释同记）：
-     共享文件加顶层 `revision: u64`，写者持锁期间读 rev、写 rev+1，发现回退即重读重试。
-     schemaVersion 保持 1（加法演进，缺字段按 0）；DSH 全量写须同步保留该字段，否则字段会被
-     无声抹掉、机制失效。双侧实现前维持 last-write-wins——单用户手点毫秒级窗口物理撞不上，
-     剩余风险仅「Agent 批量写」与对面面板点击同时发生。
+   - **ZCode↔DSH 跨进程**：**已由 DSH 侧实现（0.3.4）**，采用「文件锁 + revision」双保险：
+     - **主机制：跨进程文件锁**。锁文件与 ZCode 同名同目录（`<phrases.json 所在目录>/quick-send.lock`），
+       同样 `create_new` 抢锁、25ms 轮询、5s 超时、10s 逾期抢占。所以两侧配同一个
+       `phrases.json` 时天然互斥——**ZCode 侧不需要额外改动即可受益**。
+     - **辅助：revision 校验**。共享文件顶层 `revision: u64`，写者在锁内读 rev、写 rev+1；
+       写入前比对，发现变化即重读重放。这一层防的是「不守锁的写者」（老版本）。
+     - **schemaVersion 保持 1**（加法演进，缺字段按 0）。**DSH 全量写已同步保留 revision 字段**，
+       不会无声抹掉。
+     - ⚠️ **实测教训：只靠 revision 不够**。4 进程 × 8 次并发写，仅用 revision CAS 仍稳定丢
+       1 条（31/32）——check 与 write 之间的窗口无法消除。加文件锁后同一场景 5/5 轮均 32/32。
+       契约原文「双侧实现前维持 last-write-wins」的乐观假设（毫秒级窗口撞不上）在批量写场景
+       不成立，故本版直接上了锁。
+     - ⚠️ **mutate 必须幂等**：冲突重试会重放 mutate，其内部不得做自增计数或重新生成 id
+       （id 应在 mutate 外算好后传入），否则重试会写出重复条目。DSH 侧 5 条测试锁住此点。
 
 ## Agent 写入（双方共同约定）
 

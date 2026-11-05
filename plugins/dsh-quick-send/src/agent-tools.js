@@ -237,7 +237,6 @@ export function registerAgentTools(deps) {
         const title = clampStr(a.title, MAX_TITLE)
         const category = clampStr(a.category, MAX_CATEGORY)
 
-        const doc = await readPhrases(phrasesFile)
         const t = nowIso()
         const entry = {
           // dsh-agent- 前缀仅用于新建，让用户能一眼看出是模型加的；契约只要求 id 唯一
@@ -248,7 +247,8 @@ export function registerAgentTools(deps) {
           createdAt: t,
           updatedAt: t,
         }
-        // 读-改-写整体加锁，避免与面板/其他工具并发时互相覆盖
+        // 读-改-写整体加锁（含跨进程文件锁），避免与面板/其他工具/另一侧并发时互相覆盖。
+        // id 在 mutate **外**生成：冲突重试时复用同一 id，不会写出重复条目。
         const total = await mutatePhrases(phrasesFile, (d) => {
           d.phrases.push(entry)
           return d.phrases.length

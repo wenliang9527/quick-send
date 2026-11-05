@@ -16,6 +16,7 @@ import {
   writeView,
   mergeForDisplay,
   atomicWrite,
+  mutatePhrases,
   defaultPhrasesFile,
   defaultViewFile,
   SCHEMA_VERSION,
@@ -382,4 +383,212 @@ test('hasSupportedPlaceholder 一致性：Client 与 Host 判定相同', () => {
       '占位符判定漂移，input=' + JSON.stringify(input),
     )
   }
+})
+
+// ---------------------------------------------------------------- revision（跨进程乐观锁）
+
+// CONTRACT §写入纪律 第 5 条：ZCode↔DSH 跨进程用 revision 做乐观锁。
+//   - 共享文件顶层 revision: u64，写者持锁期间读 rev、写 rev+1
+//   - 发现回退即重读重试
+//   - schemaVersion 保持 1（加法演进，缺字段按 0）
+//   - DSH 全量写必须同步保留该字段，否则字段被无声抹掉、机制失效
+//
+// 这组测试专门锁住"不被抹掉"：外部写的字段必须在 DSH 写完后仍然存在。
+
+test('revision：DSH 写入后文件顶层带 revision，且自增', async () => {
+  const dir = tmpDir()
+  const file = path.join(dir, 'phrases.json')
+  await writePhrases(file, [])
+  const d1 = JSON.parse(fs.readFileSync(file, 'utf8'))
+  assert.equal(typeof d1.revision, 'number', '首次写入应带 revision 字段')
+
+  const now = new Date().toISOString()
+  await writePhrases(file, [{ id: 'a', title: 't', text: 'x', category: '', createdAt: now, updatedAt: now }])
+  const d2 = JSON.parse(fs.readFileSync(file, 'utf8'))
+  assert.ok(d2.revision > d1.revision, 'revision 必须自增')
+})
+
+test('revision：外部写入的 revision 不会被 DSH 抹掉（加法演进）', async () => {
+  const dir = tmpDir()
+  const file = path.join(dir, 'phrases.json')
+  // 模拟 ZCode 写了一个较高的 revision
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      schemaVersion: 1,
+      revision: 42,
+      phrases: [{ id: 'z1', title: 'Z', text: 'z', category: '', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }],
+    }),
+    'utf8',
+  )
+
+  const doc = await readPhrases(file)
+  assert.equal(doc.revision, 42, 'readPhrases 必须读出 revision')
+  assert.equal(doc.phrases.length, 1, '条目不能被丢')
+
+  // DSH 再写一次
+  const now = new Date().toISOString()
+  await writePhrases(file, doc.phrases.concat([{ id: 'a', title: 'A', text: 'a', category: '', createdAt: now, updatedAt: now }]))
+
+  const after = JSON.parse(fs.readFileSync(file, 'utf8'))
+  assert.equal(typeof after.revision, 'number', 'revision 字段必须仍在')
+  assert.ok(after.revision > 42, `revision 必须大于外部写入的 42，实际 ${after.revision}`)
+  assert.equal(after.phrases.length, 2, '两边的条目都要在')
+})
+
+test('revision：缺失时按 0 处理（老文件兼容）', async () => {
+  const dir = tmpDir()
+  const file = path.join(dir, 'phrases.json')
+  fs.writeFileSync(
+    file,
+    JSON.stringify({ schemaVersion: 1, phrases: [] }),
+    'utf8',
+  )
+  const doc = await readPhrases(file)
+  assert.equal(doc.revision, 0, '旧文件没有 revision 时按 0')
+
+  const now = new Date().toISOString()
+  await writePhrases(file, [{ id: 'x', title: 't', text: 'x', category: '', createdAt: now, updatedAt: now }])
+  const after = JSON.parse(fs.readFileSync(file, 'utf8'))
+  assert.ok(after.revision >= 1, '写入后 revision 至少为 1')
+})
+
+test('revision：非法/负数被视为 0，不崩溃', async () => {
+  const dir = tmpDir()
+  const file = path.join(dir, 'phrases.json')
+  fs.writeFileSync(file, JSON.stringify({ schemaVersion: 1, revision: -5, phrases: [] }), 'utf8')
+  const doc = await readPhrases(file)
+  assert.equal(doc.revision, 0, '负数应归一化为 0')
+
+  fs.writeFileSync(file, JSON.stringify({ schemaVersion: 1, revision: 'abc', phrases: [] }), 'utf8')
+  const doc2 = await readPhrases(file)
+  assert.equal(doc2.revision, 0, '非数字应归一化为 0')
+})
+
+test('revision：DSH 写不会被外部的旧 revision 覆盖（回退检测）', async () => {
+  const dir = tmpDir()
+  const file = path.join(dir, 'phrases.json')
+  const now = new Date().toISOString()
+  await writePhrases(file, [{ id: 'a', title: 't', text: 'x', category: '', createdAt: now, updatedAt: now }])
+  const revAfterFirst = JSON.parse(fs.readFileSync(file, 'utf8')).revision
+
+  // 模拟另一进程在我们读取之后把 revision 推高了（并发写）、并加了一条
+  const cur = JSON.parse(fs.readFileSync(file, 'utf8'))
+  cur.revision = revAfterFirst + 100
+  cur.phrases.push({ id: 'other', title: 'O', text: 'o', category: '', createdAt: now, updatedAt: now })
+  fs.writeFileSync(file, JSON.stringify(cur), 'utf8')
+
+  // DSH 继续写：不能把 revision 退回、也不能丢 other 的条目
+  const doc = await readPhrases(file)
+  assert.equal(doc.revision, revAfterFirst + 100, '必须读到外部推高的 revision')
+  await writePhrases(file, doc.phrases)
+  const after = JSON.parse(fs.readFileSync(file, 'utf8'))
+  assert.ok(after.revision > revAfterFirst + 100, 'DSH 写入后在外部 revision 基础上继续自增，绝不回退')
+  assert.equal(after.phrases.length, 2, '外部新增的条目不能丢')
+})
+
+// ---------------------------------------------------------------- 跨进程锁
+
+// 教训（实测）：只靠 revision CAS **不能**防丢数据。
+// 4 进程 × 8 次并发写，仅用 revision 仍稳定丢 1 条（31/32）——
+// 因为 check 与 write 之间存在窗口，两个写者能同时通过校验再先后覆盖。
+// 必须用 create_new 独占锁把「读-改-写」整体串起来。
+//
+// 以下锁的是「锁机制本身」的正确性，跨进程行为另由 _stab 演练验证。
+
+test('跨进程锁：创建后可释放，锁文件不留残留', async () => {
+  const dir = tmpDir()
+  const file = path.join(dir, 'phrases.json')
+  const now = new Date().toISOString()
+  await writePhrases(file, [{ id: 'a', title: 't', text: 'x', category: '', createdAt: now, updatedAt: now }])
+  const lock = path.join(dir, 'quick-send.lock')
+  assert.ok(!fs.existsSync(lock), '正常写完不应残留锁文件')
+})
+
+test('跨进程锁：锁文件被占用时，写入会等待而非覆盖', async () => {
+  const dir = tmpDir()
+  const file = path.join(dir, 'phrases.json')
+  const now = new Date().toISOString()
+  await writePhrases(file, [{ id: 'a', title: 't', text: 'x', category: '', createdAt: now, updatedAt: now }])
+  const lock = path.join(dir, 'quick-send.lock')
+
+  // 手动占锁（模拟另一进程持有），mtime 设为现在 → 不算过期
+  fs.writeFileSync(lock, '', 'utf8')
+  const t0 = Date.now()
+  let done = false
+  const p = mutatePhrases(file, (doc) => {
+    doc.phrases.push({ id: 'b', title: 'b', text: 'b', category: '', createdAt: now, updatedAt: now })
+  }).then(() => { done = true })
+
+  // 150ms 后释放锁，写入应随即完成
+  await new Promise((r) => setTimeout(r, 150))
+  assert.equal(done, false, '锁被占用时不应立即写入')
+  fs.rmSync(lock, { force: true })
+  await p
+  assert.equal(done, true, '释放锁后应完成写入')
+
+  const doc = await readPhrases(file)
+  assert.equal(doc.phrases.length, 2, '等待后写入的数据要完整')
+  assert.ok(Date.now() - t0 >= 100, '确实等待过')
+})
+
+test('跨进程锁：过期锁（持有者崩溃残留）会被抢占', async () => {
+  const dir = tmpDir()
+  const file = path.join(dir, 'phrases.json')
+  const now = new Date().toISOString()
+  await writePhrases(file, [], undefined)
+  const lock = path.join(dir, 'quick-send.lock')
+
+  // 造一个「11 秒前」的残留锁（超过 LOCK_STALE_MS=10s）
+  fs.writeFileSync(lock, '', 'utf8')
+  const old = new Date(Date.now() - 11000)
+  fs.utimesSync(lock, old, old)
+
+  const t0 = Date.now()
+  await mutatePhrases(file, (doc) => {
+    doc.phrases.push({ id: 'x', title: 'x', text: 'x', category: '', createdAt: now, updatedAt: now })
+  })
+  const elapsed = Date.now() - t0
+  assert.ok(elapsed < 2000, `过期锁应立即抢占，实际耗时 ${elapsed}ms`)
+  const doc = await readPhrases(file)
+  assert.equal(doc.phrases.length, 1)
+})
+
+test('跨进程锁：mutate 抛错时锁也会释放（finally 保证）', async () => {
+  const dir = tmpDir()
+  const file = path.join(dir, 'phrases.json')
+  await writePhrases(file, [], undefined)
+  const lock = path.join(dir, 'quick-send.lock')
+
+  await assert.rejects(
+    () => mutatePhrases(file, () => { throw new Error('boom') }),
+    /boom/,
+  )
+  assert.ok(!fs.existsSync(lock), '异常路径必须释放锁，否则后续写入全卡死')
+
+  // 后续写入应正常工作
+  const now = new Date().toISOString()
+  await mutatePhrases(file, (doc) => {
+    doc.phrases.push({ id: 'ok', title: 'ok', text: 'ok', category: '', createdAt: now, updatedAt: now })
+  })
+  const doc = await readPhrases(file)
+  assert.equal(doc.phrases.length, 1)
+})
+
+test('跨进程锁：mutate 被重试时 id 不能重新生成（保证幂等）', async () => {
+  const dir = tmpDir()
+  const file = path.join(dir, 'phrases.json')
+  await writePhrases(file, [], undefined)
+
+  // mutate 内部用固定 id（模拟 agent-tools 先算好 id 再写），
+  // 重试不应产生第二条
+  const now = new Date().toISOString()
+  const fixedId = 'fixed-id-1'
+  await mutatePhrases(file, (doc) => {
+    if (!doc.phrases.some((p) => p.id === fixedId)) {
+      doc.phrases.push({ id: fixedId, title: 't', text: 'x', category: '', createdAt: now, updatedAt: now })
+    }
+  })
+  const doc = await readPhrases(file)
+  assert.equal(doc.phrases.length, 1, '幂等 mutate 不会因重试产生重复条目')
 })
