@@ -91,7 +91,7 @@ export async function atomicWrite(file, text) {
  * 先写者新增的条目被静默抹掉（lost update）。实测 2 个并发就丢。
  *
  * 把「读改写」整体串起来即可根除进程内竞态。跨进程（ZCode 与 DSH 同时写）
- * 仍需 revision 机制，那属于 CONTRACT §4 的已知边界，不在本层解决。
+ * 由下面的 acquireFileLock 负责，本层只管同进程。
  */
 let writeChain = Promise.resolve()
 
@@ -119,11 +119,17 @@ const LOCK_STALE_MS = 10000
 const LOCK_RETRY_MS = 25
 
 /**
- * 跨进程写锁文件路径。
+ * 跨进程写锁文件路径：**phrases.json 同目录**下的 `quick-send.lock`。
  *
- * ZCode 侧用 `<数据目录>/quick-send.lock`；DSH 侧只知道 phrases.json 的完整路径，
- * 所以取**同目录**下的同名文件。两侧配同一个 phrases.json 时目录相同 → 天然互斥。
- * 文件名必须与 ZCode 完全一致，否则各锁各的，等于没锁。
+ * DSH 只知道 phrases.json 的完整路径，所以锚在它的同目录。
+ *
+ * ⚠️ 互斥的成立条件（0.3.5 勘误）：**对侧也必须锚在同一个目录**。
+ *   - ZCode ≥ 0.5.7：`lock_path()` 取 `phrases_path().parent()` → 与本侧同目录，互斥成立。
+ *   - ZCode ≤ 0.5.6：锁在插件自己的数据目录（≠ 共享 phrases.json 目录），**各锁各的、等于没锁**。
+ *     共享场景下这两个目录必然不同，所以「只要同名就天然互斥」在 0.5.6 上不成立。
+ *
+ * 结论：文件名一致只是必要条件，**目录也必须一致**；跨侧互斥自 ZCode 0.5.7 起才真正生效。
+ * 对侧版本未知时，靠 revision 兜底能发现冲突（但无法阻止丢更新，见 CONTRACT §写入纪律 5）。
  */
 function lockPathFor(file) {
   return path.join(path.dirname(file), 'quick-send.lock')

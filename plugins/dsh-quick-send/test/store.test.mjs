@@ -496,6 +496,33 @@ test('revision：DSH 写不会被外部的旧 revision 覆盖（回退检测）'
 //
 // 以下锁的是「锁机制本身」的正确性，跨进程行为另由 _stab 演练验证。
 
+// 锁位置契约：必须锚在 phrases.json **所在目录**，不能是本侧任意固定目录。
+// 跨侧互斥全靠这个锚点与对侧对齐——ZCode ≥0.5.7 用 phrases_path().parent()，
+// 本侧用 dirname(phrasesFile)，两者必须指向同一个 quick-send.lock。
+// 这条一旦回归（比如又把锁挪回 ~/.dsh/quick-send/），跨侧互斥就无声失效。
+test('锁位置：锁文件锚在 phrases.json 同目录（含深层子目录）', async () => {
+  const dir = tmpDir()
+  const deep = path.join(dir, 'a', 'b', 'c')
+  const file = path.join(deep, 'phrases.json')
+  const expectedLock = path.join(deep, 'quick-send.lock')
+  const now = new Date().toISOString()
+  await writePhrases(file, [], undefined)
+
+  // 手动占住 deep 目录下的锁 → 写入必须等待，证明锁就取在这里
+  fs.mkdirSync(deep, { recursive: true })
+  fs.writeFileSync(expectedLock, '', 'utf8')
+  let done = false
+  const p = mutatePhrases(file, (doc) => {
+    doc.phrases.push({ id: 'a', title: 't', text: 'x', category: '', createdAt: now, updatedAt: now })
+  }).then(() => { done = true })
+
+  await new Promise((r) => setTimeout(r, 150))
+  assert.equal(done, false, `锁应取在 ${expectedLock}；写提前完成说明锚点不对`)
+  fs.rmSync(expectedLock, { force: true })
+  await p
+  assert.equal(done, true)
+})
+
 test('跨进程锁：创建后可释放，锁文件不留残留', async () => {
   const dir = tmpDir()
   const file = path.join(dir, 'phrases.json')
