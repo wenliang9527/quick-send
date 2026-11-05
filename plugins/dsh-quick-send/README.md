@@ -1,4 +1,4 @@
-# dsh-quick-send
+﻿# dsh-quick-send
 
 [![npm version](https://img.shields.io/npm/v/@wenliang9527/dsh-quick-send.svg)](https://www.npmjs.com/package/@wenliang9527/dsh-quick-send)
 [![license](https://img.shields.io/npm/l/@wenliang9527/dsh-quick-send.svg)](https://github.com/wenliang9527/quick-send/blob/master/LICENSE)
@@ -454,7 +454,7 @@ cd plugins/dsh-quick-send && npm test
 node --test test/store.test.mjs test/client.test.mjs test/e2e.test.mjs test/agent-tools.test.mjs
 ```
 
-**共 168 项，全部通过。**
+**共 169 项，全部通过。**
 
 ### store.test.mjs（41 项）
 
@@ -498,7 +498,7 @@ node --test test/store.test.mjs test/client.test.mjs test/e2e.test.mjs test/agen
 - **刷新**（3 项，0.3.3 新增）：管理页有 ⟳ 按钮且可点、浮层无刷新按钮、窗口重新可见时自动刷新
 - **筛选记忆**（2 项，0.3.3 新增）：搜索词写入 `localStorage`、存储不可用时不崩溃
 
-### slash.test.mjs（32 项，0.4.0 新增）
+### slash.test.mjs（33 项，0.4.0 新增）
 
 按 DSH 真实契约（`InputTriggerSource`）装一个假 `inputTriggers` 服务，从外面调
 `candidates` / `onPick` —— 测到的是宿主实际会看到的形状，不是内部实现细节。

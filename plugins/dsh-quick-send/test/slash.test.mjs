@@ -179,11 +179,14 @@ test('斜杠命令：命令名与分组显示名分离（/qs 靠命令名解析�
 })
 
 test('斜杠命令：宿主无 inputTriggers 时静默降级，不抛错也不注册', () => {
-  const { sources, logs } = loadClient({ withService: false })
+  const { sources, logs, applyError } = loadClient({ withService: false })
+  assert.equal(applyError, null, '缺服务时 apply 必须照常完成')
   assert.equal(sources.length, 0, '没有服务时不应注册')
+  // 拿不到服务时走「延迟重试」（见 probeInputTriggers 注释），首次返回 false
+  // → 启动日志写 slash: off。关键是 apply 不能因此失败。
   assert.ok(
-    logs.some((l) => l.indexOf('未注册') >= 0),
-    '应有一行说明为什么没有斜杠命令，实际：' + logs.join(' | '),
+    logs.some((l) => l.indexOf('slash: off') >= 0),
+    '启动日志应标明斜杠命令未启用，实际：' + logs.join(' | '),
   )
 })
 
@@ -225,7 +228,7 @@ test('rc.5：宿主真没有 inputTriggers 服务时 apply 仍成功且不注册
   const { applyError, sources, logs } = loadClient({ withService: false })
   assert.equal(applyError, null, '缺服务时 apply 必须照常完成，浮层和管理页不能受影响')
   assert.equal(sources.length, 0)
-  assert.ok(logs.some((l) => l.indexOf('未注册') >= 0), '应说明原因，实际：' + logs.join(' | '))
+  assert.ok(logs.some((l) => l.indexOf('slash: off') >= 0), '启动日志应标明未启用，实际：' + logs.join(' | '))
 })
 
 test('rc.5：registerSource 抛 already registered 时降级，不冒泡', () => {
@@ -313,15 +316,30 @@ test('斜杠命令：语言切换后按新标题重新注册（英文界面显�
   assert.equal(live[0].name, '常用语')
 })
 
-test('rc.5：注册顺序是 reflect 优先，其次 ctx.get，最后 ctx.inputTriggers', () => {
+test('rc.5：探测顺序是 reflect(strict=false) 优先，其次 ctx.get，最后 ctx.inputTriggers', () => {
   const src = fs.readFileSync(CLIENT, 'utf8')
-  const i = src.indexOf('function registerSlashSource')
-  const body = src.slice(i, i + 2600)
+  const i = src.indexOf('function probeInputTriggers')
+  assert.ok(i > 0, '探测逻辑应在 probeInputTriggers 里（首次与延迟重试共用）')
+  const body = src.slice(i, i + 1800)
   const iReflect = body.indexOf('reflect.get')
   const iGet = body.indexOf("ctx.get('inputTriggers')")
   const iProp = body.indexOf('ctx.inputTriggers')
   assert.ok(iReflect >= 0 && iGet >= 0 && iProp >= 0, '三条探测路径都要在')
-  assert.ok(iReflect < iGet && iGet < iProp, '必须 reflect 优先（rc.5 唯一免 inject 读取口），实际顺序 ' + [iReflect, iGet, iProp].join(','))
+  assert.ok(
+    iReflect < iGet && iGet < iProp,
+    '必须 reflect 优先，实际顺序 ' + [iReflect, iGet, iProp].join(','),
+  )
+  // 关键：strict 必须是 false。strict=true 要求提供服务的 fiber 已 ACTIVE，
+  // 而本插件与 input-trigger 是并列 client 插件、加载顺序不定 —— 用 true 会偶发拿不到。
+  assert.ok(/reflect\.get\(\s*['"]inputTriggers['"]\s*,\s*false\s*\)/.test(body), '必须用 strict=false')
+})
+
+test('rc.5：拿不到服务时做有限次延迟重试（应对插件加载顺序竞态）', () => {
+  const src = fs.readFileSync(CLIENT, 'utf8')
+  const i = src.indexOf('function registerSlashSource')
+  const body = src.slice(i, i + 2200)
+  assert.ok(body.indexOf('setTimeout') >= 0, '必须有延迟重试：一次性放弃会导致斜杠命令时有时无')
+  assert.ok(/attempt\s*>=\s*\d+/.test(body), '必须设重试上限，不能无限重试')
 })
 
 test('rc.5：reflect.get 是真实首选（只有 reflect 能给出服务时也必须注册成功）', () => {

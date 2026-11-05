@@ -338,43 +338,96 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 注册 /quick-send 斜杠命令。
-     * @returns {boolean} 是否注册成功（供日志与测试断言）
+     * 取 inputTriggers 服务，拿不到返回 undefined。
+     *
+     * 为什么不是一次 ctx.get 就够：rc.5 的 cordis 里，服务是否可见取决于
+     *   ①它是否已被 `ctx.provide()` 声明进 reflect.props；
+     *   ②（strict 模式下）提供它的 fiber 是否已经 ACTIVE。
+     * 而 quick-send 与 input-trigger 是两个并列的 client 插件，加载顺序不保证——
+     * 本插件 apply 先跑时，`reflect.get('inputTriggers', true)` 会因 fiber 未 ACTIVE
+     * 而返回 undefined（实测日志：`宿主无 inputTriggers 服务 … slash: off`）。
+     *
+     * 所以：先 strict=false 拿「已声明但可能未激活」的实现（服务对象在 register 时就
+     * 已构造好，方法可用），再退回两条带 try/catch 的探测。
      */
-    function registerSlashSource(ctx) {
+    function probeInputTriggers(ctx) {
       var svc
-      // rc.5 契约：未声明进 inject 的服务，ctx.get(name) 与 ctx.<name> 都直接抛错
-      // （cordis reflect: cannot get property "x" without inject），不会返回 undefined；
-      // 而 inject 全为必需语义，声明了宿主没有的服务会让 entry 永远 pending（boot 直接失败）。
-      // 所以：首选 ctx.reflect.get()（rc.5 提供的免 inject 读取口，未提供返回 undefined），
-      // 旧宿主再退回两处包了 try/catch 的探测，全部失败 → 能力探测降级（slash: off）。
       try {
         if (ctx.reflect && typeof ctx.reflect.get === 'function') {
-          svc = ctx.reflect.get('inputTriggers', true)
+          // strict=false：不要求 fiber 已 ACTIVE。这是应对加载顺序竞态的关键一次。
+          svc = ctx.reflect.get('inputTriggers', false)
         }
       } catch (e) {
         svc = undefined
       }
-      if (svc === undefined || svc === null) {
+      if (!svc || typeof svc.registerSource !== 'function') {
         try {
           svc = typeof ctx.get === 'function' ? ctx.get('inputTriggers') : undefined
         } catch (e) {
           svc = undefined
         }
       }
-      if (svc === undefined || svc === null) {
+      if (!svc || typeof svc.registerSource !== 'function') {
         try {
           svc = ctx.inputTriggers
         } catch (e) {
           svc = undefined
         }
       }
-      if (!svc || typeof svc.registerSource !== 'function') {
-        console.log(
-          '[quick-send] 宿主无 inputTriggers 服务，/quick-send 斜杠命令未注册（浮层与管理页不受影响）',
-        )
+      return svc && typeof svc.registerSource === 'function' ? svc : undefined
+    }
+
+    /**
+     * 注册 /quick-send 斜杠命令。
+     *
+     * ⚠️ 实测关键（2026-11-05 真机）：开机瞬间 `inputTriggers` **可能还不存在**，
+     * 不只是"未激活"。真机日志：
+     *   `[quick-send] inputTriggers 延迟就绪，第 1 次重试成功`
+     * 即首次探测完全落空、约 100ms 后才就绪。所以**延迟重试是必需的**，
+     * 单靠 strict=false 不够（strict=false 只解决"已 provide 但未 ACTIVE"）。
+     *
+     * 若只探测一次就放弃，表现就是「斜杠命令时有时无」——取决于每次启动
+     * 哪个插件先加载。这比彻底不工作更难排查，必须避免。
+     *
+     * @returns {boolean} 首次是否拿到服务（供日志与测试断言）
+     */
+    function registerSlashSource(ctx) {
+      var svc = probeInputTriggers(ctx)
+      if (!svc) {
+        // 最多 11 次（100ms 起，指数退避封顶 2s，合计约 10s）。
+        // input-trigger 是纯 client 插件，实测第 1 次（100ms）就绪；给 10s 余量足够。
+        var attempt = 0
+        var tryLater = function () {
+          if (attempt >= 11) {
+            console.log(
+              '[quick-send] 等不到 inputTriggers 服务（已重试 11 次 / 约 10s），/quick-send 斜杠命令未注册' +
+                '（浮层与管理页不受影响；重启 DSH 通常即可恢复）',
+            )
+            return
+          }
+          attempt++
+          var wait = Math.min(100 * Math.pow(2, attempt - 1), 2000)
+          var timer = setTimeout(function () {
+            var late = probeInputTriggers(ctx)
+            if (late) {
+              // 只报"第几次成功"，便于日后判断是否又退化成必须重试
+              console.log('[quick-send] inputTriggers 延迟就绪，第 ' + attempt + ' 次重试成功')
+              mountWith(ctx, late)
+              return
+            }
+            tryLater()
+          }, wait)
+          if (timer && typeof timer.unref === 'function') timer.unref()
+        }
+        tryLater()
         return false
       }
+      mountWith(ctx, svc)
+      return true
+    }
+
+    /** 拿到服务后真正完成注册（供首次与延迟重试共用）。 */
+    function mountWith(ctx, svc) {
 
       // 分组标题跟随界面语言。source.name 在注册时固定，所以语言变了要重新注册：
       // 先 dispose 旧注册（ctx.effect 返回的 disposer），再按新标题注册。
