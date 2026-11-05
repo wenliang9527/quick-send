@@ -159,10 +159,23 @@ test('斜杠命令：宿主支持 inputTriggers 时会注册一个 "/" 源', () 
   assert.equal(sources.length, 1, '应注册且只注册一个 source')
   const s = sources[0]
   assert.equal(s.trigger, '/')
-  assert.equal(s.name, 'quick-send', '分组名必须唯一且稳定，否则候选标题会显示成原始 name')
+  // 宿主把 source.name 直接当分组标题渲染（MenuView 的 t(group.source) 查不到就原样显示），
+  // 所以这个名字是**显示名**，必须是「常用语」而不是插件包名 quick-send。
+  assert.equal(s.name, '常用语', '分组标题应显示为「常用语」，不是包名。实际：' + s.name)
   assert.equal(typeof s.candidates, 'function')
   assert.equal(typeof s.onPick, 'function')
   assert.ok(logs.some((l) => l.indexOf('slash: /quick-send') >= 0), '启动日志应标明斜杠命令已启用，实际：' + logs.join(' | '))
+})
+
+test('斜杠命令：命令名与分组显示名分离（/qs 靠命令名解析，标题靠 name）', async () => {
+  const { sources } = loadClient()
+  const s = sources[0]
+  assert.equal(s.name, '常用语')
+  // 命令名仍是 quick-send / qs —— 显示名换成中文不能影响用户敲什么
+  const byName = await cand(s, 'quick-send')
+  const byAlias = await cand(s, 'qs')
+  assert.equal(byName.length, PHRASES.length, '命令名仍须生效')
+  assert.equal(byAlias.length, PHRASES.length, '别名仍须生效')
 })
 
 test('斜杠命令：宿主无 inputTriggers 时静默降级，不抛错也不注册', () => {
@@ -219,12 +232,85 @@ test('rc.5：registerSource 抛 already registered 时降级，不冒泡', () =>
   // 复刻「profile 里残留第二份链接 → 插件被激活两次」的场景
   const src = fs.readFileSync(CLIENT, 'utf8')
   const i = src.indexOf('function registerSlashSource')
-  const body = src.slice(i, i + 2600)
+  const body = src.slice(i, i + 4000)
   assert.ok(body.indexOf('already registered') >= 0, '必须对重复注册做容错')
   assert.ok(
-    /catch\s*\(e\)\s*\{[\s\S]{0,400}already registered/.test(body),
+    /catch\s*\(e\)\s*\{[\s\S]{0,500}already registered/.test(body),
     '重复注册要在 try/catch 内识别并降级为「已注册」',
   )
+})
+
+test('斜杠命令：语言切换后按新标题重新注册（英文界面显示 Quick phrases）', () => {
+  // 直接构造一个可切换语言的 ctx：locale.subscribe 的回调被调用后，
+  // 若实现真的重新注册，sources 里会出现第二个 source 且 name 变成英文。
+  const src = fs.readFileSync(CLIENT, 'utf8')
+  let pool = []
+  let idx = 0
+  const React = {
+    createElement: (t, p, ...c) => ({ type: t, props: p || {}, children: c.flat() }),
+    useState: (i) => { const k = idx++; if (pool.length <= k) pool[k] = { v: typeof i === 'function' ? i() : i }; return [pool[k].v, () => {}] },
+    useRef: (i) => { const k = idx++; if (pool.length <= k) pool[k] = { current: i }; return pool[k] },
+    useEffect: (fn, deps) => { const k = idx++; pool[k] = { fn, deps } },
+  }
+  const modules = {}
+  globalThis.window = { __ModuleLoader__: { load({ id, factory }) { modules[id] = factory(() => React) } } }
+  globalThis.document = { createElement: () => ({ set textContent(_v) {}, parentNode: null }), head: { appendChild() {} }, addEventListener() {}, removeEventListener() {} }
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ phrases: [], categories: [] }) })
+
+  let lang = 'zh'
+  const DICT = {}
+  const listeners = []
+  const svc = {
+    registerSource(s) { live.push(s); return () => { const k = live.indexOf(s); if (k >= 0) live.splice(k, 1) } },
+    sessionOf: () => ({}),
+  }
+  const live = []
+  const locale = {
+    register(ns, dicts) { DICT[ns] = dicts; return () => {} },
+    bind(ns) {
+      return (key) => {
+        const d = DICT[ns] || {}
+        const table = d[lang] || d.zh || {}
+        return table[key] !== undefined ? table[key] : key
+      }
+    },
+    subscribe(fn) { listeners.push(fn); return () => {} },
+  }
+
+  // eslint-disable-next-line no-eval
+  ;(0, eval)(src)
+  const mod = modules['@wenliang9527/dsh-quick-send']
+
+  const ctx = {
+    slots: { inject: (_k, cb) => { cb(); return () => {} }, register: () => () => {} },
+    effect: (fn) => { const d = fn(); return typeof d === 'function' ? d : () => {} },
+    // locale 在 exports.inject 里，所以生产环境 ctx.get('locale') 可用；桩里照样提供
+    get: (k) => (k === 'locale' ? locale : undefined),
+    reflect: { get: (name) => (name === 'inputTriggers' ? svc : name === 'locale' ? locale : undefined) },
+  }
+  const origLog = console.log
+  console.log = () => {}
+  try {
+    mod.apply(ctx, {})
+  } finally {
+    console.log = origLog
+  }
+
+  assert.equal(live.length, 1, '初始应注册一个')
+  assert.equal(live[0].name, '常用语', '初始为中文标题')
+
+  // 切到英文并通知
+  lang = 'en'
+  listeners.forEach((fn) => fn())
+
+  assert.equal(live.length, 1, '语言切换应替换而非叠加注册（旧的先摘掉）')
+  assert.equal(live[0].name, 'Quick phrases', '切到英文后标题应变成 Quick phrases，实际：' + live[0].name)
+
+  // 切回中文
+  lang = 'zh'
+  listeners.forEach((fn) => fn())
+  assert.equal(live.length, 1)
+  assert.equal(live[0].name, '常用语')
 })
 
 test('rc.5：注册顺序是 reflect 优先，其次 ctx.get，最后 ctx.inputTriggers', () => {

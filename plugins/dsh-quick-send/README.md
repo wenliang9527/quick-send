@@ -1,4 +1,4 @@
-﻿# dsh-quick-send
+# dsh-quick-send
 
 [![npm version](https://img.shields.io/npm/v/@wenliang9527/dsh-quick-send.svg)](https://www.npmjs.com/package/@wenliang9527/dsh-quick-send)
 [![license](https://img.shields.io/npm/l/@wenliang9527/dsh-quick-send.svg)](https://github.com/wenliang9527/quick-send/blob/master/LICENSE)
@@ -209,6 +209,9 @@ AI 归纳只会**存进常用语库**，不会自动发送。你仍需在面板�
 
 - **裸 `/` 不列出常用语**。只敲一个 `/` 时菜单留给宿主的命令与技能，否则一敲斜杠就被
   几十条常用语挤满，找 `/goal` 都费劲。必须显式敲命令名。
+- **分组标题显示「常用语」**。宿主把 `source.name` 当分组标题直接渲染，所以注册时
+  用显示名而不是包名 `quick-send`。跟随界面语言（英文 `Quick phrases`）——
+  语言切换时会**摘掉旧的重新注册**，不是叠加。
 - **边打边出**。`/q`、`/qu`、`/qui`… 都按「正在打命令名」处理，直接给全量，
   不用一字不差打完才看得见东西。
 - **关键字不带空格**。`/quick-send 笔记` 这种带空格的写法在宿主侧会关掉菜单
@@ -451,7 +454,7 @@ cd plugins/dsh-quick-send && npm test
 node --test test/store.test.mjs test/client.test.mjs test/e2e.test.mjs test/agent-tools.test.mjs
 ```
 
-**共 166 项，全部通过。**
+**共 168 项，全部通过。**
 
 ### store.test.mjs（41 项）
 
@@ -495,13 +498,17 @@ node --test test/store.test.mjs test/client.test.mjs test/e2e.test.mjs test/agen
 - **刷新**（3 项，0.3.3 新增）：管理页有 ⟳ 按钮且可点、浮层无刷新按钮、窗口重新可见时自动刷新
 - **筛选记忆**（2 项，0.3.3 新增）：搜索词写入 `localStorage`、存储不可用时不崩溃
 
-### slash.test.mjs（30 项，0.4.0 新增）
+### slash.test.mjs（32 项，0.4.0 新增）
 
 按 DSH 真实契约（`InputTriggerSource`）装一个假 `inputTriggers` 服务，从外面调
 `candidates` / `onPick` —— 测到的是宿主实际会看到的形状，不是内部实现细节。
 
-- **注册**（3 项）：支持时注册唯一 `"/"` 源且 `name` 稳定、宿主不支持时静默降级并记日志、
+- **注册**（3 项）：支持时注册唯一 `"/"` 源、宿主不支持时静默降级并记日志、
   注册包在 `ctx.effect` 内（卸载能自动摘掉）
+- **分组标题**（2 项）：标题必须是「常用语」而不是包名 `quick-send`
+  （宿主把 `source.name` 直接当标题渲染，`t(group.source)` 查不到就原样显示）；
+  语言切换后**先摘旧的再按新标题注册**（不能叠加），且 `/quick-send` `/qs`
+  命令名不受标题变化影响。
 - **rc.5 契约：未 inject 的服务访问即抛错**（7 项，0.4.0 真机事故回归）：
   rc.5 的 cordis 里 `ctx.inputTriggers` **不是返回 undefined，而是直接 throw**
   （`cannot get property "x" without inject`）。0.4.0 首发时探测漏了一个 try/catch，
@@ -531,9 +538,17 @@ node --test test/store.test.mjs test/client.test.mjs test/e2e.test.mjs test/agen
 > | 关键字检索从「标题+分类+正文」收窄成只看标题 | 1 条变红 ✓ |
 > | 删掉 `ctx.inputTriggers` 的 try/catch | **2 条变红**（精确复现炸 boot 的 bug）✓ |
 > | 删掉 `reflect` 分支 | 1 条变红 ✓ |
+> | 把「语言没变就不重注册」改成「永不重注册」 | 1 条变红 ✓ |
 >
-> 最后一条一开始**没变红**——因为断言只查源码文本顺序，抓不到「分支被绕过」。
-> 改写成「只让 reflect 能取到服务」的行为测试后才抓住。**只查文本顺序等于没测。**
+> 其中两条一开始**没变红**，都是同一类错误——断言写在了错误的层面上：
+>
+> - 「删掉 reflect 分支」没变红：原断言只查源码文本顺序，抓不到「分支被绕过」。
+>   改成「只让 reflect 能取到服务，另两条都拿不到」的行为测试后才抓住。
+> - 「永不重注册」这条本身有效，但我第一版测试桩漏了 `ctx.get('locale')`，
+>   导致 locale 根本没接上、语言切换的代码压根没跑到。补上桩才测到真东西。
+>
+> **教训**：断言要落在行为上，不是源码文本；桩要还原真实服务的可用性，
+> 否则测试是在给自己的实现放水。
 
 ### e2e.test.mjs（31 项）
 

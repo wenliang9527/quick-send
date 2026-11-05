@@ -92,10 +92,14 @@ window.__ModuleLoader__.load({
         backTip: '返回对话界面',
         backFail: '返回失败：{msg}',
         refreshTip: '刷新列表（AI 改过常用语后点这里）',
+        // 斜杠命令在宿主候选菜单里的分组标题。宿主把 source.name 直接当标题渲染，
+        // 所以这个名字要短、要像功能名，不能是插件包名。
+        slashMenuTitle: '常用语',
       },
       en: {
         trigger: 'Phrases',
         panelTitle: 'Phrases',
+        slashMenuTitle: 'Quick phrases',
         searchPlaceholder: 'Search… (↑↓ select, Enter insert)',
         newBtn: '＋ New',
         close: 'Close',
@@ -225,8 +229,16 @@ window.__ModuleLoader__.load({
     //   inject 里的服务缺失会让整个 Client 半区不加载——那会连带毁掉浮层与管理页。
     //   这里改为能力探测，拿不到就静默跳过，旧版 DSH 上的原有功能完全不受影响。
 
-    var SLASH_SOURCE = 'quick-send' // 同时是菜单分组名（宿主按 name 分组）
+    // 命令名（用户敲的、也是身份名）与菜单分组显示名是两回事：
+    //   - SLASH_SOURCE 参与 query 解析，必须是稳定标识
+    //   - 宿主把 source.name 直接当分组标题渲染（MenuView 里 t(group.source)，
+    //     查不到就原样显示），所以它同时是「显示名」。宿主的 slash.menu 命名空间
+    //     已被内置组占用，register 会抛 already has locale，抢不过来；
+    //     改 name 是唯一干净的改法。
+    //   代价：name 在注册时固定，要跟随语言就得重新注册 —— 见 registerSlashSource。
+    var SLASH_SOURCE = 'quick-send'
     var SLASH_ALIAS = 'qs'
+    var SLASH_TITLE = { zh: '常用语', en: 'Quick phrases' }
     var SLASH_TTL_MS = 8000
     var SLASH_MAX = 30
 
@@ -363,25 +375,87 @@ window.__ModuleLoader__.load({
         )
         return false
       }
+
+      // 分组标题跟随界面语言。source.name 在注册时固定，所以语言变了要重新注册：
+      // 先 dispose 旧注册（ctx.effect 返回的 disposer），再按新标题注册。
+      // 订阅失败/宿主无 subscribe 时就固定用当前语言 —— 显示名不完美，但功能不受影响。
+      var dispose = null
+      var title = null
+
+      function currentTitle() {
+        // tr() 读的是 locale.bind 绑定的活动语言，拿不到就退回中文
+        var probe = tr('slashMenuTitle')
+        return probe && probe !== 'slashMenuTitle' ? probe : SLASH_TITLE.zh
+      }
+
+      function mount() {
+        var next = currentTitle()
+        if (dispose !== null) {
+          if (next === title) return // 语言没变，别白折腾注册
+          try {
+            dispose()
+          } catch (e) {
+            /* 摘除失败不致命，下面会重注册 */
+          }
+          dispose = null
+        }
+        title = next
+        var off = svc.registerSource({
+          trigger: '/',
+          name: next,
+          order: 6, // 排在宿主内置 /goal 等之后，不与 command/skill 组抢首位
+          candidates: function (_session, req) {
+            return slashCandidates(req && req.query, req && req.signal)
+          },
+          onPick: slashPick,
+        })
+        dispose = typeof off === 'function' ? off : function () {}
+      }
+
       ctx.effect(function () {
         try {
-          return svc.registerSource({
-            trigger: '/',
-            name: SLASH_SOURCE,
-            order: 6, // 排在宿主内置 /goal 等之后，不与 command/skill 组抢首位
-            candidates: function (_session, req) {
-              return slashCandidates(req && req.query, req && req.signal)
-            },
-            onPick: slashPick,
-          })
+          mount()
         } catch (e) {
           // 宿主契约：registerSource 遇 (trigger, name) 重复直接 throw（dsh-client-ui-input-trigger
           // lib/client.js）。若 profile 里残留第二份链接导致本插件被激活两次，第二个实例走到这里——
           // 降级为「已注册」，不让整个 Client 半区激活失败拖垮 web boot（浮层与管理页不受影响）。
-          if (e && /already registered/.test(String(e && e.message))) return function () {}
+          if (e && /already registered/.test(String(e && e.message))) {
+            dispose = function () {}
+            return dispose
+          }
           throw e
         }
+        return function () {
+          if (dispose !== null) {
+            try {
+              dispose()
+            } catch (e) {
+              /* ignore */
+            }
+            dispose = null
+          }
+        }
       })
+
+      // 语言切换后重建注册（拿不到 locale 服务就跳过，标题停在当前语言）
+      try {
+        var loc = null
+        if (ctx.reflect && typeof ctx.reflect.get === 'function') loc = ctx.reflect.get('locale', true)
+        if (!loc && typeof ctx.get === 'function') loc = ctx.get('locale')
+        if (loc && typeof loc.subscribe === 'function') {
+          ctx.effect(function () {
+            return loc.subscribe(function () {
+              try {
+                mount()
+              } catch (e) {
+                /* 重注册失败保留旧的，功能不受影响 */
+              }
+            })
+          })
+        }
+      } catch (e) {
+        /* 语言订阅是锦上添花，失败不影响注册本身 */
+      }
       return true
     }
 
