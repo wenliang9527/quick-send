@@ -1,0 +1,6 @@
+url: https://github.com/wenliang9527/quick-send/tree/master/plugins/dsh-quick-send
+name: wenliang9527/quick-send#dsh-quick-send
+category: tools
+description:
+  en: 'Stored-phrase library for the composer. A `/quick-send` slash command or a picker inserts a phrase at the caret without overwriting the draft or sending it; a sidebar page manages entries and imports or exports them as JSON; four agent tools (`quick_send_list`, `quick_send_add`, `quick_send_update`, `quick_send_delete`) let the model read and write the library. `{{date}}`, `{{time}}` and `{{datetime}}` expand at insert time, and the content file can be shared with the ZCode quick-send plugin through one `phrases.json` under cross-process file locking.'
+  zh: '输入框常用语库：`/quick-send` 斜杠命令或浮层把短语插入到光标处，不覆盖草稿、不自动发送；侧边栏管理页管理条目并支持 JSON 导入导出；四个 Agent 工具（`quick_send_list`、`quick_send_add`、`quick_send_update`、`quick_send_delete`）让模型直接读写这个库；`{{date}}`、`{{time}}`、`{{datetime}}` 在插入时展开；内容文件可与 ZCode 的 quick-send 插件共用同一份 `phrases.json`，跨进程写入带文件锁。'
